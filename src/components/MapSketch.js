@@ -16,6 +16,7 @@ import { colors } from '../theme';
  *   windChip      string   top-left overlay
  *   etaChip       string   bottom-right overlay (number, label below)
  *   showLegend    object   {paddlers?, vessels?, campsites?, routes?}
+ *   locationPin   {x, y, label?}  searched location pin marker (red pin with label)
  *   children      extra SVG elements
  */
 export default function MapSketch({
@@ -29,6 +30,7 @@ export default function MapSketch({
   windChip,
   etaChip,
   showLegend,
+  locationPin,
   children,
 }) {
   const W = 276; // internal SVG width matches phone inner width
@@ -92,6 +94,35 @@ export default function MapSketch({
           return null;
         })}
 
+        {/* Location pin — searched/geocoded location marker */}
+        {locationPin && (
+          <>
+            {/* Drop shadow */}
+            <Ellipse
+              cx={locationPin.x}
+              cy={locationPin.y + 2}
+              rx={6}
+              ry={2.5}
+              fill="rgba(0,0,0,0.18)"
+            />
+            {/* Pin body — teardrop shape */}
+            <Path
+              d={`M ${locationPin.x} ${locationPin.y} C ${locationPin.x - 7} ${locationPin.y - 5}, ${locationPin.x - 7} ${locationPin.y - 16}, ${locationPin.x} ${locationPin.y - 19} C ${locationPin.x + 7} ${locationPin.y - 16}, ${locationPin.x + 7} ${locationPin.y - 5}, ${locationPin.x} ${locationPin.y} Z`}
+              fill={colors.warn}
+              stroke="white"
+              strokeWidth={1.5}
+            />
+            {/* Inner circle */}
+            <Circle
+              cx={locationPin.x}
+              cy={locationPin.y - 12}
+              r={3.5}
+              fill="white"
+              opacity={0.9}
+            />
+          </>
+        )}
+
         {/* My position — blue dot with pulse halo and directional heading arrow */}
         {myPos && (
           <>
@@ -115,6 +146,13 @@ export default function MapSketch({
         <Circle cx={W - 18} cy={18} r={10} fill="rgba(255,255,255,0.82)" />
         <Path d={`M ${W - 18} 10 L ${W - 20} 18 L ${W - 18} 16 L ${W - 16} 18 Z`} fill={colors.text} />
       </Svg>
+
+      {/* Location pin label — HTML overlay positioned above the pin */}
+      {locationPin && locationPin.label && (
+        <View style={[styles.pinLabel, { left: locationPin.x - 40, top: Math.max(4, (locationPin.y / height) * 100 - 18) + '%' }]}>
+          <Text style={styles.pinLabelText} numberOfLines={1}>{locationPin.label}</Text>
+        </View>
+      )}
 
       {/* Wind chip — top left */}
       {windChip && (
@@ -171,7 +209,7 @@ export default function MapSketch({
       )}
 
       {/* Attribution */}
-      <Text style={styles.attr}>© OpenStreetMap</Text>
+      <Text style={styles.attr}>{'\u00A9'} OpenStreetMap</Text>
     </View>
   );
 }
@@ -206,6 +244,16 @@ const styles = StyleSheet.create({
   },
   etaNum:   { fontSize: 14, fontWeight: '500', color: colors.text, lineHeight: 16 },
   etaLabel: { fontSize: 7.5, fontWeight: '300', color: colors.textMuted },
+  // Location pin label
+  pinLabel: {
+    position: 'absolute', width: 80, alignItems: 'center',
+  },
+  pinLabelText: {
+    fontSize: 8, fontWeight: '500', color: colors.text,
+    backgroundColor: 'rgba(248,247,243,0.9)',
+    borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1,
+    overflow: 'hidden', textAlign: 'center',
+  },
   overlay: {
     position: 'absolute', bottom: 9, left: 9, right: 9,
     backgroundColor: 'rgba(248,247,243,0.93)',

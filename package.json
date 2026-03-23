@@ -38,15 +38,6 @@
     "babel-preset-expo": "^55.0.12",
     "jest": "^30.3.0"
   },
-  "jest": {
-    "testEnvironment": "node",
-    "transform": {
-      "^.+\\.js$": "babel-jest"
-    },
-    "transformIgnorePatterns": [
-      "node_modules/(?!(expo-.*|@expo/.*|react-native.*|@react-native.*)/)"
-    ]
-  },
   "overrides": {
     "react-native-web": {
       "react": "19.2.0",

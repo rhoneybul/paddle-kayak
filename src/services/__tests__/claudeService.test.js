@@ -438,7 +438,7 @@ describe('planPaddleWithWeather', () => {
     const body = JSON.parse(fetchCall[1].body);
     const userMsg = body.messages[0].content;
     expect(userMsg).toContain('Trip date: 2024-07-15');
-    expect(userMsg).toContain('Desired paddle duration: 3 hours');
+    expect(userMsg).toContain('Desired paddle duration: approximately 3 hours');
     expect(userMsg).toContain('Transport: car');
     expect(userMsg).toContain('coffee, pub');
   });

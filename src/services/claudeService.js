@@ -375,6 +375,7 @@ export async function planPaddle(userPrompt) {
  * @param {number}  [opts.durationHrs] — requested paddle duration in hours (optional)
  * @param {string}  [opts.transport]   — "car" | "public_transport" (optional)
  * @param {string[]} [opts.interests]  — e.g. ["coffee","pub","swim"] (optional)
+ * @param {Object}  [opts.location]    — { lat, lng } coordinates for the trip (optional)
  * @returns {Promise<Object>} — plan object with exactly 3 routes
  */
 export async function planPaddleWithWeather({
@@ -385,16 +386,21 @@ export async function planPaddleWithWeather({
   durationHrs,
   transport,
   interests,
+  location,
 } = {}) {
   if (!CLAUDE_API_KEY || CLAUDE_API_KEY === 'sk-ant-your-key-here') {
     throw new Error('CLAUDE_API_KEY not set. Add EXPO_PUBLIC_CLAUDE_API_KEY to your .env file.');
   }
 
+  // Resolve coordinates — prefer explicit location, fall back to lat/lon
+  const resolvedLat = location?.lat != null ? location.lat : lat;
+  const resolvedLon = location?.lng != null ? location.lng : lon;
+
   // ── 1. Fetch weather context (best-effort — don't fail if unavailable) ────
   let weather = null;
-  if (lat != null && lon != null) {
+  if (resolvedLat != null && resolvedLon != null) {
     try {
-      weather = await getWeatherWithCache(lat, lon);
+      weather = await getWeatherWithCache(resolvedLat, resolvedLon);
     } catch {
       // Weather unavailable — continue without it
     }
@@ -404,8 +410,38 @@ export async function planPaddleWithWeather({
 
   // ── 2. Build enriched user message ────────────────────────────────────────
   const parts = [prompt];
-  if (date) parts.push(`\nTrip date: ${date}`);
-  if (durationHrs) parts.push(`Desired paddle duration: ${durationHrs} hours`);
+
+  // Temporal context — date and duration
+  if (date) {
+    const dateStr = typeof date === 'string' ? date : new Date(date).toLocaleDateString();
+    parts.push(`\nTrip date: ${dateStr}`);
+  }
+  if (durationHrs) {
+    const durationLabel = durationHrs === 1 ? '1 hour' : `${durationHrs} hours`;
+    parts.push(`Desired paddle duration: approximately ${durationLabel}`);
+  }
+
+  // Geographic context — coordinates
+  if (resolvedLat != null && resolvedLon != null) {
+    parts.push(`Starting location coordinates: ${resolvedLat.toFixed(4)}, ${resolvedLon.toFixed(4)}`);
+  }
+
+  // Build contextual summary line for the AI
+  const contextParts = [];
+  if (date) {
+    const dateStr = typeof date === 'string' ? date : new Date(date).toLocaleDateString();
+    contextParts.push(dateStr);
+  }
+  if (durationHrs) {
+    contextParts.push(`approximately ${durationHrs === 1 ? '1 hour' : `${durationHrs} hours`}`);
+  }
+  if (resolvedLat != null && resolvedLon != null) {
+    contextParts.push(`near coordinates ${resolvedLat.toFixed(4)}, ${resolvedLon.toFixed(4)}`);
+  }
+  if (contextParts.length > 0) {
+    parts.push(`\nPlan a kayak trip for ${contextParts.join(' lasting ')}.`);
+  }
+
   if (transport) parts.push(`Transport: ${transport}`);
   if (interests && interests.length > 0) {
     parts.push(`Interested in stops for: ${interests.join(', ')}`);
