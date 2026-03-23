@@ -9,7 +9,8 @@ import { colors } from '../theme';
  *   height        number   (required)
  *   routes        array    [{type:'solid'|'dashed'|'faint', d:string, color?}]
  *   waypoints     array    [{x, y, type:'start'|'end'|'mid'|'camp'|'paddler'|'vessel'}]
- *   myPos         {x, y}
+ *   myPos         {x, y}   current position marker (blue dot with pulse)
+ *   heading       number   compass heading in degrees (0-360) for directional arrow
  *   overlayTitle  string
  *   overlayMeta   string
  *   windChip      string   top-left overlay
@@ -22,6 +23,7 @@ export default function MapSketch({
   routes = [],
   waypoints = [],
   myPos,
+  heading,
   overlayTitle,
   overlayMeta,
   windChip,
@@ -90,13 +92,22 @@ export default function MapSketch({
           return null;
         })}
 
-        {/* My position */}
+        {/* My position — blue dot with pulse halo and directional heading arrow */}
         {myPos && (
           <>
-            <Circle cx={myPos.x} cy={myPos.y} r={7} fill={`${colors.good}22`} />
-            <Circle cx={myPos.x} cy={myPos.y} r={4.5} fill={colors.good} stroke="white" strokeWidth={2} />
-            {/* Heading arrow */}
-            <Path d={`M ${myPos.x} ${myPos.y - 8} L ${myPos.x - 3} ${myPos.y - 14} L ${myPos.x + 3} ${myPos.y - 14} Z`} fill={colors.good} opacity={0.7} />
+            {/* Outer pulse ring */}
+            <Circle cx={myPos.x} cy={myPos.y} r={12} fill={`${colors.blue}12`} />
+            {/* Inner halo */}
+            <Circle cx={myPos.x} cy={myPos.y} r={8} fill={`${colors.blue}28`} />
+            {/* Core blue dot */}
+            <Circle cx={myPos.x} cy={myPos.y} r={5} fill={colors.blue} stroke="white" strokeWidth={2} />
+            {/* Heading arrow — rotates based on compass heading */}
+            <Path
+              d={`M ${myPos.x} ${myPos.y - 9} L ${myPos.x - 3.5} ${myPos.y - 15} L ${myPos.x + 3.5} ${myPos.y - 15} Z`}
+              fill={colors.blue}
+              opacity={0.8}
+              transform={heading != null ? `rotate(${heading} ${myPos.x} ${myPos.y})` : undefined}
+            />
           </>
         )}
 

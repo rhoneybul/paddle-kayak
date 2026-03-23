@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, PanResponder, Platform } from 'react-native';
 import { colors, layout, text, sheetHandle } from '../theme';
 
 // ── Layout ────────────────────────────────────────────────────────────────────
@@ -185,6 +185,116 @@ export const TabBar = ({ tabs, active, onChange }) => (
   </View>
 );
 
+// ── Slider ───────────────────────────────────────────────────────────────────
+
+export const Slider = ({ min = 0, max = 100, step = 1, value, onValueChange, label, unit, style }) => {
+  const trackRef = useRef(null);
+  const trackWidth = useRef(0);
+
+  const clamp = (v) => Math.min(max, Math.max(min, Math.round(v / step) * step));
+
+  const fraction = max > min ? (value - min) / (max - min) : 0;
+
+  const updateValue = (pageX) => {
+    if (!trackRef.current) return;
+    trackRef.current.measure((_x, _y, width, _h, px) => {
+      const ratio = Math.max(0, Math.min(1, (pageX - px) / width));
+      const raw = min + ratio * (max - min);
+      const stepped = clamp(raw);
+      if (stepped !== value) onValueChange(stepped);
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => updateValue(e.nativeEvent.pageX),
+      onPanResponderMove: (e) => updateValue(e.nativeEvent.pageX),
+    })
+  ).current;
+
+  return (
+    <View style={[s.sliderWrap, style]}>
+      {label && (
+        <View style={s.sliderLabelRow}>
+          <Text style={s.sliderLabel}>{label}</Text>
+          <Text style={s.sliderValueLabel}>{value}{unit ? ` ${unit}` : ''}</Text>
+        </View>
+      )}
+      <View
+        ref={trackRef}
+        style={s.sliderTrack}
+        onLayout={(e) => { trackWidth.current = e.nativeEvent.layout.width; }}
+        {...panResponder.panHandlers}
+      >
+        <View style={[s.sliderFill, { width: `${fraction * 100}%` }]} />
+        <View style={[s.sliderThumb, { left: `${fraction * 100}%` }]} />
+      </View>
+      <View style={s.sliderMinMax}>
+        <Text style={s.sliderBound}>{min}{unit ? ` ${unit}` : ''}</Text>
+        <Text style={s.sliderBound}>{max}{unit ? ` ${unit}` : ''}</Text>
+      </View>
+    </View>
+  );
+};
+
+// ── Segmented Control ────────────────────────────────────────────────────────
+
+export const SegmentedControl = ({ options, value, onChange, style }) => {
+  const containerWidth = useRef(0);
+  const slideAnim = useRef(new Animated.Value(0)).current;
+
+  const count = options.length || 1;
+
+  useEffect(() => {
+    const idx = options.findIndex(o => o === value);
+    if (idx >= 0 && containerWidth.current > 0) {
+      const segWidth = (containerWidth.current - 4) / count; // minus 4px total padding
+      Animated.spring(slideAnim, {
+        toValue: idx * segWidth,
+        useNativeDriver: false,
+        tension: 68,
+        friction: 12,
+      }).start();
+    }
+  }, [value, options]);
+
+  const handleLayout = (e) => {
+    containerWidth.current = e.nativeEvent.layout.width;
+    const idx = options.findIndex(o => o === value);
+    if (idx >= 0) {
+      const segWidth = (e.nativeEvent.layout.width - 4) / count;
+      slideAnim.setValue(idx * segWidth);
+    }
+  };
+
+  return (
+    <View style={[s.segWrap, style]} onLayout={handleLayout}>
+      {/* Animated active indicator */}
+      <Animated.View
+        style={[
+          s.segIndicator,
+          {
+            width: containerWidth.current > 0 ? (containerWidth.current - 4) / count : `${100 / count}%`,
+            transform: [{ translateX: slideAnim }],
+          },
+        ]}
+      />
+      {options.map((opt) => (
+        <TouchableOpacity
+          key={opt}
+          style={s.segOption}
+          onPress={() => onChange(opt)}
+          activeOpacity={0.7}
+        >
+          <Text style={[s.segText, value === opt && s.segTextActive]}>{opt}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+};
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const P = 12; // page padding
@@ -262,4 +372,20 @@ const s = StyleSheet.create({
   tabActive: { backgroundColor: colors.white, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
   tabText: { fontSize: 11, fontWeight: '400', color: colors.textMuted },
   tabTextActive: { fontWeight: '600', color: colors.text },
+  // Slider
+  sliderWrap: { marginHorizontal: P, marginBottom: 8 },
+  sliderLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  sliderLabel: { fontSize: 12, fontWeight: '500', color: colors.text },
+  sliderValueLabel: { fontSize: 13, fontWeight: '600', color: colors.good },
+  sliderTrack: { height: 6, backgroundColor: '#e5e2db', borderRadius: 3, position: 'relative', justifyContent: 'center' },
+  sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: colors.good, borderRadius: 3 },
+  sliderThumb: { position: 'absolute', width: 22, height: 22, borderRadius: 11, backgroundColor: colors.white, marginLeft: -11, top: -8, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 3, borderWidth: 2, borderColor: colors.good },
+  sliderMinMax: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  sliderBound: { fontSize: 9, fontWeight: '300', color: colors.textMuted },
+  // Segmented Control
+  segWrap: { flexDirection: 'row', marginHorizontal: P, marginBottom: 8, backgroundColor: '#e1e0db', borderRadius: 8, padding: 2, position: 'relative', overflow: 'hidden' },
+  segIndicator: { position: 'absolute', top: 2, bottom: 2, left: 2, backgroundColor: colors.white, borderRadius: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  segOption: { flex: 1, padding: 8, alignItems: 'center', zIndex: 1 },
+  segText: { fontSize: 12, fontWeight: '400', color: colors.textMuted },
+  segTextActive: { fontWeight: '600', color: colors.text },
 });

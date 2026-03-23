@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import {
-  signInWithGoogle, signInWithApple, onAuthStateChange, getSession, isSupabaseConfigured,
+  signInWithGoogle, onAuthStateChange, getSession, isSupabaseConfigured,
 } from '../services/authService';
 
 const { width, height } = Dimensions.get('window');
@@ -19,13 +19,6 @@ const PaddleLogo = () => (
     <Line x1={18} y1={6} x2={18} y2={30} stroke={colors.text} strokeWidth={1.2} strokeLinecap="round" />
     <Ellipse cx={18} cy={10} rx={4.5} ry={3.5} stroke={colors.text} strokeWidth={1} fill="none" />
     <Ellipse cx={18} cy={26} rx={4.5} ry={3.5} stroke={colors.text} strokeWidth={1} fill="none" />
-  </Svg>
-);
-
-const AppleLogo = () => (
-  <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-    <Path d="M11.5 2.3C10.6 3.4 10 5 10.3 6.6 11.8 6.7 13.3 5.9 14.2 4.8 15 3.8 15.5 2.3 15.1.7 13.7.8 12.3 1.5 11.5 2.3Z" fill={colors.bg} />
-    <Path d="M15.2 7.1C13.5 6.1 11.2 6.4 9.8 7.7 8.3 9 8.5 11.4 10.1 13.3 10.9 14.3 11.9 15.5 13.3 15.4 14.5 15.4 15.2 14.6 16.7 14.6 18.2 14.6 18.9 15.4 20.2 15.4 21.7 15.4 22.7 14.1 23.6 13.1 24.2 12.2 24.8 11.1 25.1 10 21.5 8.7 21.7 3.5 25.2 2.3 24.2.6 22.4-.4 20.3-.3 18.9-.2 17.7.7 16.6.6 16.6-.5 16.4-.5" fill={colors.bg} transform="scale(0.65) translate(0, 2)" />
   </Svg>
 );
 
@@ -62,7 +55,7 @@ export default function SignInScreen({ navigation }) {
     return unsubscribe;
   }, []);
 
-  const handleAuth = async (provider) => {
+  const handleGoogleAuth = async () => {
     if (!isSupabaseConfigured) {
       navigation.replace('Home');
       return;
@@ -70,8 +63,7 @@ export default function SignInScreen({ navigation }) {
     setAuthError(null);
     setLoading(true);
     try {
-      if (provider === 'google') await signInWithGoogle();
-      else if (provider === 'apple') await signInWithApple();
+      await signInWithGoogle();
       // Web: browser now redirects to Google — component will unmount, no further action needed.
       // Mobile: WebBrowser session finishes, onAuthStateChange fires and navigates to Home.
     } catch (err) {
@@ -104,14 +96,8 @@ export default function SignInScreen({ navigation }) {
 
           {authError ? <Text style={s.errorText}>{authError}</Text> : null}
 
-          {/* Apple */}
-          <TouchableOpacity style={s.btnDark} onPress={() => handleAuth('apple')} activeOpacity={0.85} disabled={loading}>
-            <View style={s.btnLogo}><AppleLogo /></View>
-            <Text style={s.btnTextDark}>Continue with Apple</Text>
-          </TouchableOpacity>
-
           {/* Google */}
-          <TouchableOpacity style={s.btnLight} onPress={() => handleAuth('google')} activeOpacity={0.85} disabled={loading}>
+          <TouchableOpacity style={s.btnLight} onPress={handleGoogleAuth} activeOpacity={0.85} disabled={loading}>
             <View style={s.btnLogo}><GoogleLogo /></View>
             <Text style={s.btnTextLight}>{loading ? 'Signing in…' : 'Continue with Google'}</Text>
           </TouchableOpacity>
@@ -153,11 +139,9 @@ const s = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '600', color: colors.text, marginTop: 12, marginBottom: 3 },
   tagline: { fontSize: 12, fontWeight: '300', color: colors.textMuted, marginBottom: 36 },
   divider: { width: 32, height: 1, backgroundColor: colors.border, marginBottom: 32 },
-  btnDark: { width: '100%', backgroundColor: colors.text, borderRadius: 10, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10 },
   btnLight: { width: '100%', backgroundColor: colors.white, borderRadius: 10, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10, borderWidth: 1, borderColor: colors.border },
   btnGhost: { width: '100%', borderRadius: 10, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
   btnLogo: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  btnTextDark: { flex: 1, textAlign: 'center', fontSize: 13.5, fontWeight: '400', color: colors.bg },
   btnTextLight: { flex: 1, textAlign: 'center', fontSize: 13.5, fontWeight: '400', color: colors.text },
   btnTextGhost: { fontSize: 13.5, fontWeight: '400', color: colors.textMid },
   orRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 6, width: '100%' },

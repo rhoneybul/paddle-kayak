@@ -1,34 +1,124 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, ActivityIndicator, Animated, Keyboard, Alert,
+  ScrollView, Animated, Keyboard, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { colors } from '../theme';
-import { SheetHandle, SectionHeader, AlertBanner, PrimaryButton, CampsiteCard, TabBar } from '../components/UI';
+import {
+  SectionHeader, AlertBanner, PrimaryButton, ProgressBar,
+  CampsiteCard, TabBar, Slider, SegmentedControl,
+} from '../components/UI';
 import MapSketch from '../components/MapSketch';
 import { planPaddle, hasApiKey } from '../services/claudeService';
+import { SKILL_LEVELS, getStravaTokens, fetchStravaActivities, inferSkillFromStrava } from '../services/stravaService';
 
-const EXAMPLES = [
-  "I'm in Axminster and want to go for a day paddle tomorrow for about 2 hours",
-  "I'm in London with a car — where can I go for a day paddle?",
-  "Planning a weekend trip, want to kayak and camp. Based in Bristol",
-  "I'm near Sydney, complete beginner, want a gentle 2-hour paddle",
-  "I want to plan a week-long kayak expedition. Based in the Scottish Highlands",
+const TRANSPORT_OPTIONS = ['Car', 'Public Transport'];
+
+const DESIRED_STOPS = ['Coffee', 'Pub', 'Swim', 'Campsite', 'Picnic', 'Wildlife'];
+
+const SKILL_OPTIONS = [
+  { ...SKILL_LEVELS.BEGINNER, effort: 'Easy — flat water, gentle pace' },
+  { ...SKILL_LEVELS.INTERMEDIATE, effort: 'Moderate — coastal or river, steady pace' },
+  { ...SKILL_LEVELS.ADVANCED, effort: 'Hard — open water, challenging conditions' },
+  { ...SKILL_LEVELS.EXPERT, effort: 'Expert — expedition-grade, all conditions' },
 ];
 
 export default function PlannerScreen({ navigation }) {
+  // Structured inputs
+  const [destination, setDestination] = useState('');
+  const [duration, setDuration]       = useState(3);       // hours (1-8)
+  const [transport, setTransport]     = useState('Car');
+  const [selectedStops, setSelectedStops] = useState([]);
+  const [skillLevel, setSkillLevel]   = useState(SKILL_LEVELS.INTERMEDIATE);
+  const [previousPaddle, setPreviousPaddle] = useState(null); // Strava-inferred info
+  const [stravaLoaded, setStravaLoaded] = useState(false);
+
+  // Legacy prompt for free-text fallback
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingPct, setLoadingPct] = useState(0);
   const [plan, setPlan] = useState(null);
   const [activeTab, setActiveTab] = useState('routes');
   const [selectedRoute, setSelectedRoute] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const handlePlan = async (text) => {
-    const input = (text || prompt).trim();
-    if (!input) return;
+  // Pre-fill destination with GPS location
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const { latitude: lat, longitude: lon } = pos.coords;
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+          { headers: { 'User-Agent': 'PaddleApp/1.0' } },
+        );
+        const data = await res.json();
+        const label =
+          data.address?.city || data.address?.town ||
+          data.address?.village || data.address?.county || '';
+        if (label && !destination) setDestination(label);
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  // Load Strava skill inference if connected
+  useEffect(() => {
+    (async () => {
+      try {
+        const tokens = await getStravaTokens();
+        if (!tokens) return;
+        const activities = await fetchStravaActivities(50);
+        if (activities.length > 0) {
+          const inferred = inferSkillFromStrava(activities);
+          setSkillLevel(inferred);
+
+          // Find most recent paddle activity for "previous paddle" context
+          const paddleTypes = ['Kayaking', 'Canoeing', 'Rowing', 'StandUpPaddling', 'Surfing'];
+          const lastPaddle = activities.find(a => paddleTypes.includes(a.type));
+          if (lastPaddle) {
+            setPreviousPaddle({
+              name: lastPaddle.name,
+              distance: (lastPaddle.distance / 1000).toFixed(1),
+              date: new Date(lastPaddle.start_date).toLocaleDateString(),
+              type: lastPaddle.type,
+            });
+          }
+          setStravaLoaded(true);
+        }
+      } catch { /* Strava not available */ }
+    })();
+  }, []);
+
+  const toggleStop = (stop) => {
+    setSelectedStops(prev =>
+      prev.includes(stop) ? prev.filter(s => s !== stop) : [...prev, stop]
+    );
+  };
+
+  // Build structured prompt from form inputs
+  const buildPrompt = () => {
+    const parts = [];
+    parts.push(`I'm in ${destination}`);
+    parts.push(`and want a ${duration}-hour day paddle`);
+    parts.push(`I have access to ${transport.toLowerCase()}`);
+    if (skillLevel) parts.push(`My skill level is ${skillLevel.label.toLowerCase()}`);
+    if (selectedStops.length > 0) parts.push(`I'd like stops for: ${selectedStops.join(', ').toLowerCase()}`);
+    if (previousPaddle) {
+      parts.push(`My last paddle was "${previousPaddle.name}" (${previousPaddle.distance} km on ${previousPaddle.date})`);
+    }
+    // Effort estimate based on skill level
+    const skillOpt = SKILL_OPTIONS.find(s => s.key === skillLevel.key);
+    if (skillOpt) parts.push(`Effort preference: ${skillOpt.effort}`);
+    return parts.join('. ') + '.';
+  };
+
+  const handleGenerate = async () => {
     Keyboard.dismiss();
+    if (!destination.trim()) return;
 
     if (!hasApiKey()) {
       Alert.alert(
@@ -38,42 +128,44 @@ export default function PlannerScreen({ navigation }) {
       return;
     }
 
+    const input = buildPrompt();
+    setPrompt(input);
     setLoading(true);
     setPlan(null);
     fadeAnim.setValue(0);
     setSelectedRoute(0);
     setActiveTab('routes');
+    setLoadingPct(0);
+
+    // Simulate progress while waiting
+    const interval = setInterval(() => {
+      setLoadingPct(prev => Math.min(prev + 8, 90));
+    }, 500);
 
     try {
       const result = await planPaddle(input);
+      clearInterval(interval);
+      setLoadingPct(100);
       setPlan(result);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {
+      clearInterval(interval);
       Alert.alert('Could not plan paddle', e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const reset = () => { setPlan(null); setPrompt(''); fadeAnim.setValue(0); };
+  const reset = () => { setPlan(null); setPrompt(''); fadeAnim.setValue(0); setLoadingPct(0); };
 
   // ── INPUT ─────────────────────────────────────────────────────────────────
   if (!plan && !loading) {
     return (
       <View style={s.container}>
         <SafeAreaView style={s.safe}>
-          {/* Subtle map bg */}
-          <View style={s.mapBg}>
-            <View style={s.mapWater} />
-            <View style={s.mapLand1} />
-            <View style={s.mapLand2} />
-            <View style={s.mapGreen} />
-            <View style={s.mapFade} />
-          </View>
-
           <View style={s.nav}>
             <TouchableOpacity onPress={() => navigation.goBack()} style={s.back}>
-              <Text style={s.backText}>‹</Text>
+              <Text style={s.backText}>{'\u2039'}</Text>
             </TouchableOpacity>
             <Text style={s.navTitle}>Plan a Paddle</Text>
           </View>
@@ -84,59 +176,101 @@ export default function PlannerScreen({ navigation }) {
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={s.scrollContent}
           >
-            {/* Logo mark */}
-            <View style={s.logoWrap}>
-              <View style={s.logoBadge}>
-                <Text style={s.logoEmoji}>🛶</Text>
-              </View>
-              <Text style={s.logoSub}>Describe your paddle in plain English</Text>
-            </View>
-
-            {/* Input card */}
+            {/* Destination input */}
+            <SectionHeader>Destination / Region</SectionHeader>
             <View style={s.inputCard}>
               <TextInput
                 style={s.input}
-                value={prompt}
-                onChangeText={setPrompt}
-                placeholder={`e.g. I'm in Axminster and want a 2-hour day paddle tomorrow…`}
+                value={destination}
+                onChangeText={setDestination}
+                placeholder="e.g. Axminster, Bristol, Lake District..."
                 placeholderTextColor={colors.textFaint}
-                multiline
-                numberOfLines={3}
                 returnKeyType="done"
-                onSubmitEditing={() => handlePlan()}
-                autoFocus
               />
-              <TouchableOpacity
-                style={[s.planBtn, !prompt.trim() && s.planBtnDisabled]}
-                onPress={() => handlePlan()}
-                disabled={!prompt.trim()}
-                activeOpacity={0.85}
-              >
-                <Text style={s.planBtnText}>Plan →</Text>
-              </TouchableOpacity>
             </View>
 
-            {/* Examples */}
-            <Text style={s.examplesLabel}>Try an example</Text>
-            {EXAMPLES.map((ex, i) => (
-              <TouchableOpacity
-                key={i}
-                style={s.exampleChip}
-                onPress={() => { setPrompt(ex); handlePlan(ex); }}
-                activeOpacity={0.7}
-              >
-                <Text style={s.exampleText}>{ex}</Text>
-              </TouchableOpacity>
-            ))}
+            {/* Duration slider */}
+            <SectionHeader>Duration</SectionHeader>
+            <Slider
+              min={1}
+              max={8}
+              step={1}
+              value={duration}
+              onValueChange={setDuration}
+              label="Paddle time"
+              unit="hrs"
+            />
 
-            {!hasApiKey() && (
-              <View style={s.keyWarning}>
-                <Text style={s.keyWarningText}>
-                  ⚠️  Add EXPO_PUBLIC_CLAUDE_API_KEY to your .env to enable AI planning.{'\n'}
-                  Free key at console.anthropic.com
+            {/* Transport */}
+            <SectionHeader>Getting there</SectionHeader>
+            <SegmentedControl
+              options={TRANSPORT_OPTIONS}
+              value={transport}
+              onChange={setTransport}
+            />
+
+            {/* Skill level */}
+            <SectionHeader>Paddling proficiency</SectionHeader>
+            {previousPaddle && (
+              <View style={s.previousPaddle}>
+                <Text style={s.previousPaddleLabel}>Previous paddle</Text>
+                <Text style={s.previousPaddleValue}>
+                  {previousPaddle.name} {'\u00b7'} {previousPaddle.distance} km {'\u00b7'} {previousPaddle.date}
                 </Text>
               </View>
             )}
+            <View style={s.skillGrid}>
+              {SKILL_OPTIONS.map((sk) => (
+                <TouchableOpacity
+                  key={sk.key}
+                  style={[s.skillCard, skillLevel.key === sk.key && s.skillCardActive]}
+                  onPress={() => setSkillLevel(sk)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.skillLabel, skillLevel.key === sk.key && s.skillLabelActive]}>{sk.label}</Text>
+                  <Text style={s.skillEffort}>{sk.effort}</Text>
+                  <Text style={s.skillMeta}>Max {sk.maxWindKnots} kts {'\u00b7'} {sk.maxDistKm} km/day</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {stravaLoaded && (
+              <Text style={s.stravaNote}>Skill auto-detected from Strava activities</Text>
+            )}
+
+            {/* Desired stops */}
+            <SectionHeader>Desired stops</SectionHeader>
+            <View style={s.stopsWrap}>
+              {DESIRED_STOPS.map((stop) => (
+                <TouchableOpacity
+                  key={stop}
+                  style={[s.stopChip, selectedStops.includes(stop) && s.stopChipActive]}
+                  onPress={() => toggleStop(stop)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.stopChipText, selectedStops.includes(stop) && s.stopChipTextActive]}>{stop}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* API key warning */}
+            {!hasApiKey() && (
+              <AlertBanner
+                type="caution"
+                title="AI planning unavailable"
+                body="Add EXPO_PUBLIC_CLAUDE_API_KEY to your .env to enable AI-powered trip planning. Get a key at console.anthropic.com"
+              />
+            )}
+
+            {/* Generate button */}
+            <TouchableOpacity
+              style={[s.generateBtn, !destination.trim() && s.generateBtnDisabled]}
+              onPress={handleGenerate}
+              disabled={!destination.trim()}
+              activeOpacity={0.85}
+            >
+              <Text style={s.generateBtnText}>Generate Trip {'\u2192'}</Text>
+            </TouchableOpacity>
+
             <View style={{ height: 48 }} />
           </ScrollView>
         </SafeAreaView>
@@ -148,9 +282,19 @@ export default function PlannerScreen({ navigation }) {
   if (loading) {
     return (
       <View style={[s.container, s.centered]}>
-        <View style={s.logoBadge}><Text style={s.logoEmoji}>🛶</Text></View>
-        <Text style={s.loadTitle}>Planning your paddle…</Text>
-        <Text style={s.loadPrompt} numberOfLines={2}>"{prompt.length > 60 ? prompt.slice(0, 60) + '…' : prompt}"</Text>
+        <View style={s.logoBadge}><Text style={s.logoEmoji}>{'\uD83D\uDEF6'}</Text></View>
+        <Text style={s.loadTitle}>Planning your paddle{'\u2026'}</Text>
+        <Text style={s.loadPrompt} numberOfLines={2}>
+          {destination} {'\u00b7'} {duration}h {'\u00b7'} {skillLevel.label}
+        </Text>
+        <View style={{ width: 200, marginTop: 8 }}>
+          <ProgressBar
+            startLabel="Analysing"
+            endLabel="Done"
+            pct={loadingPct}
+            color={colors.good}
+          />
+        </View>
         <View style={s.dotsRow}>
           <LoadDot delay={0} /><LoadDot delay={200} /><LoadDot delay={400} />
         </View>
@@ -177,7 +321,7 @@ export default function PlannerScreen({ navigation }) {
       <SafeAreaView style={s.safe}>
         <View style={s.nav}>
           <TouchableOpacity onPress={reset} style={s.back}>
-            <Text style={s.backText}>‹</Text>
+            <Text style={s.backText}>{'\u2039'}</Text>
           </TouchableOpacity>
           <Text style={s.navTitle}>{plan.location?.base || 'Your Paddle'}</Text>
           <View style={s.countBadge}>
@@ -198,7 +342,7 @@ export default function PlannerScreen({ navigation }) {
             ...(isMultiDay ? [{ x: 126, y: 72, type: 'camp' }, { x: 148, y: 82, type: 'camp', faded: true }] : []),
           ]}
           overlayTitle={plan.understood}
-          overlayMeta={`${plan.location?.base} · ${(plan.trip?.type || '').replace('_', ' ')} · ${plan.conditions?.skillLevel || 'intermediate'}`}
+          overlayMeta={`${plan.location?.base} \u00b7 ${(plan.trip?.type || '').replace('_', ' ')} \u00b7 ${plan.conditions?.skillLevel || 'intermediate'}`}
           showLegend={{
             routes: [
               { label: routes[0]?.name || 'Route 1', color: colors.mapRoute },
@@ -211,9 +355,9 @@ export default function PlannerScreen({ navigation }) {
         {/* Summary strip */}
         <View style={s.summaryStrip}>
           {[
-            ['Base', plan.location?.base || '—'],
-            ['Type', (plan.trip?.type || '—').replace('_', ' ')],
-            ['Skill', plan.conditions?.skillLevel || '—'],
+            ['Base', plan.location?.base || '\u2014'],
+            ['Type', (plan.trip?.type || '\u2014').replace('_', ' ')],
+            ['Skill', plan.conditions?.skillLevel || '\u2014'],
           ].map(([label, value], i) => (
             <View key={label} style={[s.summaryCell, i < 2 && s.summaryCellBorder]}>
               <Text style={s.summaryCellLabel}>{label}</Text>
@@ -226,7 +370,7 @@ export default function PlannerScreen({ navigation }) {
 
         <Animated.ScrollView style={{ opacity: fadeAnim, flex: 1 }} showsVerticalScrollIndicator={false}>
 
-          {/* ── ROUTES TAB ── */}
+          {/* ROUTES TAB */}
           {activeTab === 'routes' && (
             <View style={s.tabContent}>
               {routes.map((r, i) => (
@@ -263,7 +407,7 @@ export default function PlannerScreen({ navigation }) {
                     <View style={s.routeDetail}>
                       <Text style={s.routeWhy}>{r.why}</Text>
                       {r.launchPoint ? <Text style={s.routeMetaRow}><Text style={s.routeMetaKey}>Launch  </Text>{r.launchPoint}</Text> : null}
-                      {r.travelFromBase ? <Text style={s.routeMetaRow}><Text style={s.routeMetaKey}>Travel  </Text>{r.travelFromBase} · {r.travelTimeMin} min</Text> : null}
+                      {r.travelFromBase ? <Text style={s.routeMetaRow}><Text style={s.routeMetaKey}>Travel  </Text>{r.travelFromBase} {'\u00b7'} {r.travelTimeMin} min</Text> : null}
                       {r.bestConditions ? (
                         <View style={s.condTip}>
                           <Text style={s.condTipText}>{r.bestConditions}</Text>
@@ -291,14 +435,14 @@ export default function PlannerScreen({ navigation }) {
               )}
 
               <PrimaryButton
-                label="Check Conditions & Start →"
+                label="Check Conditions & Start \u2192"
                 onPress={() => navigation.navigate('Weather', { planResult: plan, selectedRoute: sel })}
                 style={{ marginTop: 4 }}
               />
             </View>
           )}
 
-          {/* ── CAMPSITES TAB ── */}
+          {/* CAMPSITES TAB */}
           {activeTab === 'campsites' && (
             <View style={s.tabContent}>
               {campsites.length > 0 ? campsites.map((c, i) => (
@@ -319,7 +463,7 @@ export default function PlannerScreen({ navigation }) {
             </View>
           )}
 
-          {/* ── KIT TAB ── */}
+          {/* KIT TAB */}
           {activeTab === 'kit' && (
             <View style={s.tabContent}>
               <View style={s.kitCard}>
@@ -359,13 +503,6 @@ const s = StyleSheet.create({
   container:  { flex: 1, backgroundColor: colors.bg },
   safe:       { flex: 1 },
   centered:   { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  // Map background for input state
-  mapBg:   { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' },
-  mapWater: { position: 'absolute', inset: 0, backgroundColor: colors.mapWater, opacity: 0.35 },
-  mapLand1: { position: 'absolute', top: 0, left: 0, width: 110, height: 220, borderBottomRightRadius: 36, backgroundColor: colors.mapLand, opacity: 0.3 },
-  mapLand2: { position: 'absolute', top: 0, right: 0, width: 90, height: 185, borderBottomLeftRadius: 28, backgroundColor: colors.mapLand, opacity: 0.25 },
-  mapGreen: { position: 'absolute', top: 18, left: 14, width: 58, height: 48, borderRadius: 7, backgroundColor: colors.mapGreen, opacity: 0.4 },
-  mapFade:  { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: colors.bg, opacity: 0.45 },
   // Nav
   nav:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: P, paddingBottom: 8, paddingTop: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border },
   back:       { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
@@ -374,24 +511,36 @@ const s = StyleSheet.create({
   countBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.good, alignItems: 'center', justifyContent: 'center' },
   countText:  { fontSize: 10, fontWeight: '600', color: colors.bg },
   scroll:     { flex: 1 },
-  scrollContent: { paddingHorizontal: P },
+  scrollContent: { paddingBottom: 24 },
+  // Input
+  inputCard:  { marginHorizontal: P, backgroundColor: colors.white, borderRadius: 10, borderWidth: 1, borderColor: colors.border, padding: P, marginBottom: P, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 3, elevation: 2 },
+  input:      { fontSize: 13, fontWeight: '400', color: colors.text, lineHeight: 20, minHeight: 36 },
+  // Skill grid
+  skillGrid:  { marginHorizontal: P, flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  skillCard:  { width: '48%', backgroundColor: colors.white, borderRadius: 8, borderWidth: 1, borderColor: colors.borderLight, padding: 9, flexGrow: 1, flexBasis: '45%' },
+  skillCardActive: { borderColor: colors.good, borderWidth: 1.5, backgroundColor: colors.goodLight },
+  skillLabel: { fontSize: 12, fontWeight: '500', color: colors.text, marginBottom: 2 },
+  skillLabelActive: { color: colors.good, fontWeight: '600' },
+  skillEffort: { fontSize: 10, fontWeight: '300', color: colors.textMid, marginBottom: 2, lineHeight: 14 },
+  skillMeta:  { fontSize: 8.5, fontWeight: '300', color: colors.textMuted },
+  stravaNote: { fontSize: 10, fontWeight: '300', color: colors.good, marginHorizontal: P, marginBottom: 8, fontStyle: 'italic' },
+  // Previous paddle
+  previousPaddle: { marginHorizontal: P, marginBottom: 6, backgroundColor: colors.blueLight, borderRadius: 7, padding: 8, paddingHorizontal: 10 },
+  previousPaddleLabel: { fontSize: 9, fontWeight: '500', color: colors.blue, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
+  previousPaddleValue: { fontSize: 11, fontWeight: '300', color: colors.text, lineHeight: 16 },
+  // Desired stops
+  stopsWrap:  { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: P, marginBottom: 8 },
+  stopChip:   { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  stopChipActive: { backgroundColor: colors.good, borderColor: colors.good },
+  stopChipText: { fontSize: 12, fontWeight: '400', color: colors.textMid },
+  stopChipTextActive: { color: colors.white, fontWeight: '500' },
+  // Generate button
+  generateBtn: { marginHorizontal: P, marginTop: 8, backgroundColor: colors.good, borderRadius: 10, padding: 14, alignItems: 'center', shadowColor: colors.good, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 2 },
+  generateBtnDisabled: { backgroundColor: '#c8c4bc', shadowOpacity: 0 },
+  generateBtnText: { fontSize: 14, fontWeight: '500', color: '#fff' },
   // Logo
-  logoWrap:   { alignItems: 'center', paddingTop: 36, paddingBottom: 24 },
   logoBadge:  { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
   logoEmoji:  { fontSize: 24 },
-  logoSub:    { fontSize: 12, fontWeight: '300', color: colors.textMuted },
-  // Input
-  inputCard:  { backgroundColor: colors.white, borderRadius: 10, borderWidth: 1, borderColor: colors.border, padding: P, marginBottom: P, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 3, elevation: 2 },
-  input:      { fontSize: 13, fontWeight: '300', color: colors.text, lineHeight: 20, minHeight: 64, textAlignVertical: 'top', marginBottom: 8 },
-  planBtn:    { backgroundColor: colors.text, borderRadius: 8, padding: 10, alignItems: 'center', alignSelf: 'flex-end', paddingHorizontal: 20 },
-  planBtnDisabled: { backgroundColor: '#c8c4bc' },
-  planBtnText: { fontSize: 13, fontWeight: '500', color: colors.bg },
-  // Examples
-  examplesLabel: { fontSize: 9, fontWeight: '600', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, marginTop: 4 },
-  exampleChip: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 10, marginBottom: 6 },
-  exampleText: { fontSize: 12, fontWeight: '300', color: colors.textMid, lineHeight: 18 },
-  keyWarning: { backgroundColor: colors.cautionLight, borderWidth: 1, borderColor: colors.cautionBorder, borderRadius: 8, padding: P, marginTop: 8 },
-  keyWarningText: { fontSize: 11, fontWeight: '300', color: '#6a5a2a', lineHeight: 18 },
   // Loading
   loadTitle:  { fontSize: 14, fontWeight: '400', color: colors.textMid },
   loadPrompt: { fontSize: 11, fontWeight: '300', color: colors.textMuted, textAlign: 'center', maxWidth: 260, lineHeight: 18 },

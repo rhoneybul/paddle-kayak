@@ -1,24 +1,31 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { colors } from '../theme';
 import MapSketch from '../components/MapSketch';
+import { AlertBanner } from '../components/UI';
 import { getCurrentUser, signOut } from '../services/authService';
 import {
   connectStrava, disconnectStrava, getStravaTokens, getStravaAthlete,
   handleStravaWebCallback, isStravaConfigured,
 } from '../services/stravaService';
 
+// Throttle interval for live location updates (ms) — balance accuracy vs battery
+const LOCATION_UPDATE_INTERVAL = 5000;
+
 export default function HomeScreen({ navigation }) {
   const [name, setName]                   = useState(null);
   const [location, setLocation]           = useState(null);   // { label, coords }
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [heading, setHeading]             = useState(null);
   const [stravaAthlete, setStravaAthlete] = useState(null);
   const [stravaConnected, setStravaConnected] = useState(false);
   const [stravaLoading, setStravaLoading] = useState(false);
   const [stravaError, setStravaError]     = useState(null);
+  const locationSubRef = useRef(null);
 
   // Load display name from auth
   useEffect(() => {
@@ -31,19 +38,35 @@ export default function HomeScreen({ navigation }) {
     });
   }, []);
 
-  // Get GPS location + reverse-geocode to place name
+  // Get GPS location + reverse-geocode to place name, with live tracking
   useEffect(() => {
+    let locationSub = null;
+    let mounted = true;
+
     (async () => {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          setLocation({ label: 'Location unavailable', coords: null });
+          if (mounted) {
+            setPermissionDenied(true);
+            setLocation({ label: 'Location unavailable', coords: null });
+          }
           return;
         }
+        if (mounted) setPermissionDenied(false);
+
+        // Initial high-accuracy position for centering
         const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.High,
         });
         const { latitude: lat, longitude: lon } = pos.coords;
+
+        if (mounted) {
+          setLocation(prev => ({
+            label: prev?.label || 'Your location',
+            coords: { lat, lon },
+          }));
+        }
 
         // Reverse geocode via Nominatim (free, no key)
         try {
@@ -58,14 +81,46 @@ export default function HomeScreen({ navigation }) {
             data.address?.village ||
             data.address?.county  ||
             'Your location';
-          setLocation({ label, coords: { lat, lon } });
+          if (mounted) setLocation({ label, coords: { lat, lon } });
         } catch {
-          setLocation({ label: 'Your location', coords: { lat, lon } });
+          if (mounted) setLocation({ label: 'Your location', coords: { lat, lon } });
         }
+
+        // Start throttled live location updates
+        locationSub = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: LOCATION_UPDATE_INTERVAL,
+            distanceInterval: 5, // minimum 5 meters between updates
+          },
+          (newPos) => {
+            if (mounted) {
+              setLocation(prev => ({
+                label: prev?.label || 'Your location',
+                coords: {
+                  lat: newPos.coords.latitude,
+                  lon: newPos.coords.longitude,
+                },
+              }));
+              if (newPos.coords.heading != null && newPos.coords.heading >= 0) {
+                setHeading(newPos.coords.heading);
+              }
+            }
+          },
+        );
+        locationSubRef.current = locationSub;
       } catch {
-        setLocation({ label: 'Location unavailable', coords: null });
+        if (mounted) setLocation({ label: 'Location unavailable', coords: null });
       }
     })();
+
+    return () => {
+      mounted = false;
+      if (locationSubRef.current) {
+        locationSubRef.current.remove();
+        locationSubRef.current = null;
+      }
+    };
   }, []);
 
   // Load Strava connection state
@@ -138,21 +193,36 @@ export default function HomeScreen({ navigation }) {
   const coordLabel = (() => {
     if (!location?.coords) return null;
     const { lat, lon } = location.coords;
-    return `${Math.abs(lat).toFixed(3)}°${lat >= 0 ? 'N' : 'S'}  ${Math.abs(lon).toFixed(3)}°${lon >= 0 ? 'E' : 'W'}`;
+    return `${Math.abs(lat).toFixed(3)}\u00b0${lat >= 0 ? 'N' : 'S'}  ${Math.abs(lon).toFixed(3)}\u00b0${lon >= 0 ? 'E' : 'W'}`;
   })();
+
+  // Map position: centre the blue dot in the sketch when we have coordinates
+  const mapPos = location?.coords ? { x: 138, y: 155 } : null;
 
   return (
     <View style={s.container}>
 
-      {/* Map — position dot centred in the sketch (sketch map is not geo-referenced) */}
+      {/* Map — blue dot centred in the sketch (sketch map is not geo-referenced) */}
       <MapSketch
         height={300}
-        myPos={{ x: 138, y: 155 }}
-        overlayTitle={location ? location.label : 'Locating…'}
+        myPos={mapPos}
+        heading={heading}
+        overlayTitle={location ? location.label : 'Locating\u2026'}
         overlayMeta={coordLabel}
       />
 
       <SafeAreaView style={s.sheet} edges={['bottom']}>
+
+        {/* Permission denied alert */}
+        {permissionDenied && (
+          <TouchableOpacity onPress={() => Linking.openSettings()} activeOpacity={0.8}>
+            <AlertBanner
+              type="caution"
+              title="Location access denied"
+              body="Tap to open Settings and enable location to see your position on the map."
+            />
+          </TouchableOpacity>
+        )}
 
         {/* Header row */}
         <View style={s.header}>
@@ -171,7 +241,7 @@ export default function HomeScreen({ navigation }) {
           activeOpacity={0.85}
         >
           <Text style={s.planBtnText}>Plan a paddle</Text>
-          <Text style={s.planChev}>›</Text>
+          <Text style={s.planChev}>{'\u203a'}</Text>
         </TouchableOpacity>
 
         {/* Strava row */}
@@ -182,7 +252,7 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.stravaLabel}>Strava</Text>
               {stravaConnected && stravaAthlete ? (
                 <Text style={s.stravaSub}>
-                  {stravaAthlete.firstname} {stravaAthlete.lastname} · connected
+                  {stravaAthlete.firstname} {stravaAthlete.lastname} {'\u00b7'} connected
                 </Text>
               ) : (
                 <Text style={s.stravaSub}>

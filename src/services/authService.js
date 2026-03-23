@@ -1,5 +1,5 @@
 /**
- * Supabase auth for the app (mobile + web).
+ * Supabase auth for the app (mobile + web) — Google-only.
  *
  * Uses EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY from .env
  * Falls back gracefully to guest mode if keys are not set.
@@ -73,10 +73,6 @@ async function oAuthSignIn(provider) {
 
 export async function signInWithGoogle() {
   return oAuthSignIn('google');
-}
-
-export async function signInWithApple() {
-  return oAuthSignIn('apple');
 }
 
 export async function signOut() {
