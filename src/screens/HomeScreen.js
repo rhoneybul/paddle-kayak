@@ -12,6 +12,7 @@ import {
   connectStrava, disconnectStrava, getStravaTokens, getStravaAthlete,
   handleStravaWebCallback, isStravaConfigured,
 } from '../services/stravaService';
+import StravaLogo from '../components/StravaLogo';
 
 // Throttle interval for live location updates (ms) — balance accuracy vs battery
 const LOCATION_UPDATE_INTERVAL = 5000;
@@ -291,17 +292,6 @@ export default function HomeScreen({ navigation }) {
           <View style={s.actionDivider} />
           <TouchableOpacity
             style={s.actionRow}
-            onPress={() => navigation.navigate('TripSetup')}
-            activeOpacity={0.75}
-          >
-            <View style={[s.actionIconWrap, s.actionIconNeutral]}>
-              <Text style={s.actionIconSymbol}>⚙</Text>
-            </View>
-            <Text style={s.actionLabel}>Trip Settings</Text>
-          </TouchableOpacity>
-          <View style={s.actionDivider} />
-          <TouchableOpacity
-            style={s.actionRow}
             onPress={() => navigation.navigate('History')}
             activeOpacity={0.75}
           >
@@ -315,6 +305,9 @@ export default function HomeScreen({ navigation }) {
         {/* Strava connection */}
         <Text style={s.sectionLabel}>CONNECTIONS</Text>
         <View style={s.stravaRow}>
+          <View style={s.stravaLogoWrap}>
+            <StravaLogo size={18} />
+          </View>
           <View style={[s.statusDot, { backgroundColor: stravaConnected ? colors.good : colors.border }]} />
           <View style={s.stravaLeft}>
             <Text style={s.stravaLabel}>Strava</Text>
@@ -442,6 +435,7 @@ const s = StyleSheet.create({
     borderRadius: 14, borderWidth: 1, borderColor: colors.borderLight,
     padding: 14,
   },
+  stravaLogoWrap:     { width: 28, height: 28, borderRadius: 7, backgroundColor: '#FC4C0215', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   stravaLeft:         { flex: 1 },
   statusDot:          { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   stravaLabel:        { fontSize: 13, fontWeight: '500', color: colors.text, marginBottom: 1 },

@@ -29,6 +29,7 @@ const {
   formatProficiencyForPrompt,
   SKILL_LEVELS,
   EFFORT_LEVELS,
+  PADDLE_TYPES,
 } = require('../stravaService');
 
 // ── buildProficiency ─────────────────────────────────────────────────────────
@@ -286,6 +287,61 @@ describe('formatProficiencyForPrompt', () => {
     expect(formatted).toContain('1 Strava activities');
     expect(formatted).toContain('Morning Paddle');
     expect(formatted).not.toContain('(self-reported)');
+  });
+});
+
+// ── PADDLE_TYPES ─────────────────────────────────────────────────────────────
+
+describe('PADDLE_TYPES', () => {
+  it('should include Kayak as a supported activity type', () => {
+    expect(PADDLE_TYPES).toContain('Kayak');
+  });
+
+  it('should include all original paddle types', () => {
+    expect(PADDLE_TYPES).toContain('Kayaking');
+    expect(PADDLE_TYPES).toContain('Canoeing');
+    expect(PADDLE_TYPES).toContain('Rowing');
+    expect(PADDLE_TYPES).toContain('StandUpPaddling');
+    expect(PADDLE_TYPES).toContain('Surfing');
+  });
+});
+
+// ── analyseStravaActivities with Kayak type ─────────────────────────────────
+
+describe('analyseStravaActivities — Kayak type', () => {
+  const makeActivity = (type, distanceM, movingTimeSec, name = 'Test Paddle') => ({
+    type,
+    distance: distanceM,
+    moving_time: movingTimeSec,
+    name,
+    start_date: '2025-06-15T10:00:00Z',
+  });
+
+  it('should recognise Kayak (distinct from Kayaking) as a paddle activity', () => {
+    const activities = [
+      makeActivity('Kayak', 8000, 3600, 'River Kayak'),
+    ];
+
+    const result = analyseStravaActivities(activities);
+
+    expect(result).not.toBeNull();
+    expect(result.activities).toHaveLength(1);
+    expect(result.bestActivity.name).toBe('River Kayak');
+    expect(result.proficiency.source).toBe('strava');
+  });
+
+  it('should include both Kayak and Kayaking activities in analysis', () => {
+    const activities = [
+      makeActivity('Kayaking', 10000, 7200, 'Morning Kayaking'),
+      makeActivity('Kayak', 12000, 5400, 'Afternoon Kayak'),
+      makeActivity('Run', 5000, 1800, 'Morning Run'),
+    ];
+
+    const result = analyseStravaActivities(activities);
+
+    expect(result).not.toBeNull();
+    expect(result.activities).toHaveLength(2); // Kayaking + Kayak, not Run
+    expect(result.bestActivity.name).toBe('Afternoon Kayak'); // longest distance
   });
 });
 

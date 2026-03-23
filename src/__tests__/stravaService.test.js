@@ -62,6 +62,14 @@ describe('inferSkillFromStrava', () => {
     expect(result.key).toBe('beginner');
   });
 
+  test('includes Kayak activity type (distinct from Kayaking)', () => {
+    const activities = [
+      { type: 'Kayak', distance: 15000, moving_time: 7200, name: 'River Kayak', start_date: '2025-06-15T10:00:00Z' },
+    ];
+    const result = inferSkillFromStrava(activities);
+    expect(result.key).not.toBe('beginner');
+  });
+
   test('SKILL_LEVELS has all expected levels', () => {
     expect(SKILL_LEVELS).toHaveProperty('BEGINNER');
     expect(SKILL_LEVELS).toHaveProperty('INTERMEDIATE');

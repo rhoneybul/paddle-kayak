@@ -284,7 +284,7 @@ function formatDuration(hrs) {
 
 // ── Strava-based proficiency ─────────────────────────────────────────────────
 
-const PADDLE_TYPES = ['Kayaking', 'Canoeing', 'Rowing', 'StandUpPaddling', 'Surfing'];
+export const PADDLE_TYPES = ['Kayaking', 'Canoeing', 'Rowing', 'StandUpPaddling', 'Surfing', 'Kayak'];
 
 /**
  * Analyse Strava activities and build a proficiency from the best paddle.
