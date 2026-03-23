@@ -202,16 +202,52 @@ export default function HomeScreen({ navigation }) {
   return (
     <View style={s.container}>
 
-      {/* Map — blue dot centred in the sketch (sketch map is not geo-referenced) */}
-      <MapSketch
-        height={300}
-        myPos={mapPos}
-        heading={heading}
-        overlayTitle={location ? location.label : 'Locating\u2026'}
-        overlayMeta={coordLabel}
-      />
+      {/* Map — blue dot centred in the sketch */}
+      <View style={s.mapContainer}>
+        <MapSketch
+          height={310}
+          myPos={mapPos}
+          heading={heading}
+          overlayTitle={location ? location.label : 'Locating\u2026'}
+          overlayMeta={coordLabel}
+        />
 
+        {/* Search bar overlay */}
+        <SafeAreaView style={s.searchOverlay} edges={['top']} pointerEvents="box-none">
+          <TouchableOpacity
+            style={s.searchBar}
+            onPress={() => navigation.navigate('Planner')}
+            activeOpacity={0.9}
+          >
+            <View style={s.searchIcon}>
+              <View style={s.searchIconDot} />
+            </View>
+            <Text style={s.searchPlaceholder}>Plan a paddle route…</Text>
+            <View style={s.searchRight}>
+              <View style={s.searchBtn}><Text style={s.searchBtnText}>AI</Text></View>
+            </View>
+          </TouchableOpacity>
+        </SafeAreaView>
+
+        {/* Map controls */}
+        <View style={s.mapControls}>
+          <TouchableOpacity style={s.mapCtrlBtn} activeOpacity={0.8}>
+            <Text style={s.mapCtrlText}>+</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.mapCtrlBtn, s.mapCtrlBtnBorder]} activeOpacity={0.8}>
+            <Text style={s.mapCtrlText}>−</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.mapCtrlBtn, { marginTop: 8 }]} activeOpacity={0.8}>
+            <Text style={s.mapCtrlText}>◎</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Bottom sheet */}
       <SafeAreaView style={s.sheet} edges={['bottom']}>
+
+        {/* Sheet handle */}
+        <View style={s.handle} />
 
         {/* Permission denied alert */}
         {permissionDenied && (
@@ -224,45 +260,75 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         )}
 
-        {/* Header row */}
-        <View style={s.header}>
-          <Text style={s.welcome}>
-            Welcome back{firstName ? `, ${firstName}` : ''}.
-          </Text>
-          <TouchableOpacity onPress={handleSignOut} hitSlop={{ top: 8, bottom: 8, left: 12, right: 0 }}>
-            <Text style={s.signOutText}>Sign out</Text>
+        {/* Sheet header */}
+        <View style={s.sheetHeader}>
+          <View style={s.sheetIconWrap}>
+            <View style={s.sheetIcon} />
+          </View>
+          <View style={s.sheetTitleWrap}>
+            <Text style={s.sheetTitle}>
+              {firstName ? `${firstName}'s Trips` : 'My Trips'}
+            </Text>
+            <Text style={s.sheetSubtitle}>Plan a new paddle</Text>
+          </View>
+          <TouchableOpacity onPress={handleSignOut} style={s.sheetMenuBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={s.sheetMenuText}>···</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Plan a paddle */}
-        <TouchableOpacity
-          style={s.planBtn}
-          onPress={() => navigation.navigate('Planner')}
-          activeOpacity={0.85}
-        >
-          <Text style={s.planBtnText}>Plan a paddle</Text>
-          <Text style={s.planChev}>{'\u203a'}</Text>
-        </TouchableOpacity>
-
-        {/* Strava row */}
-        <View style={s.stravaRow}>
-          <View style={s.stravaLeft}>
-            <View style={[s.statusDot, { backgroundColor: stravaConnected ? colors.good : colors.border }]} />
-            <View>
-              <Text style={s.stravaLabel}>Strava</Text>
-              {stravaConnected && stravaAthlete ? (
-                <Text style={s.stravaSub}>
-                  {stravaAthlete.firstname} {stravaAthlete.lastname} {'\u00b7'} connected
-                </Text>
-              ) : (
-                <Text style={s.stravaSub}>
-                  {isStravaConfigured() ? 'Not connected' : 'Credentials not set in .env'}
-                </Text>
-              )}
-              {stravaError ? <Text style={s.stravaErr}>{stravaError}</Text> : null}
+        {/* Actions card */}
+        <View style={s.actionsCard}>
+          <TouchableOpacity
+            style={s.actionRow}
+            onPress={() => navigation.navigate('Planner')}
+            activeOpacity={0.75}
+          >
+            <View style={s.actionIconWrap}>
+              <Text style={s.actionIconPlus}>+</Text>
             </View>
-          </View>
+            <Text style={s.actionLabel}>Plan New Route</Text>
+          </TouchableOpacity>
+          <View style={s.actionDivider} />
+          <TouchableOpacity
+            style={s.actionRow}
+            onPress={() => navigation.navigate('TripSetup')}
+            activeOpacity={0.75}
+          >
+            <View style={[s.actionIconWrap, s.actionIconNeutral]}>
+              <Text style={s.actionIconSymbol}>⚙</Text>
+            </View>
+            <Text style={s.actionLabel}>Trip Settings</Text>
+          </TouchableOpacity>
+          <View style={s.actionDivider} />
+          <TouchableOpacity
+            style={s.actionRow}
+            onPress={() => navigation.navigate('History')}
+            activeOpacity={0.75}
+          >
+            <View style={[s.actionIconWrap, s.actionIconNeutral]}>
+              <Text style={s.actionIconSymbol}>↑</Text>
+            </View>
+            <Text style={s.actionLabel}>Export History</Text>
+          </TouchableOpacity>
+        </View>
 
+        {/* Strava connection */}
+        <Text style={s.sectionLabel}>CONNECTIONS</Text>
+        <View style={s.stravaRow}>
+          <View style={[s.statusDot, { backgroundColor: stravaConnected ? colors.good : colors.border }]} />
+          <View style={s.stravaLeft}>
+            <Text style={s.stravaLabel}>Strava</Text>
+            {stravaConnected && stravaAthlete ? (
+              <Text style={s.stravaSub}>
+                {stravaAthlete.firstname} {stravaAthlete.lastname} · connected
+              </Text>
+            ) : (
+              <Text style={s.stravaSub}>
+                {isStravaConfigured() ? 'Not connected' : 'Credentials not set in .env'}
+              </Text>
+            )}
+            {stravaError ? <Text style={s.stravaErr}>{stravaError}</Text> : null}
+          </View>
           {isStravaConfigured() && (
             stravaLoading ? (
               <ActivityIndicator size="small" color={colors.textMuted} />
@@ -272,7 +338,7 @@ export default function HomeScreen({ navigation }) {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={handleConnectStrava} hitSlop={{ top: 8, bottom: 8, left: 12, right: 0 }}>
-                <Text style={s.stravaActionOrange}>Connect</Text>
+                <Text style={s.stravaActionBlue}>Connect</Text>
               </TouchableOpacity>
             )
           )}
@@ -284,57 +350,103 @@ export default function HomeScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  sheet:     { flex: 1, paddingHorizontal: 16 },
+  container:    { flex: 1, backgroundColor: colors.bg },
+  mapContainer: { position: 'relative' },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 20,
-    paddingBottom: 16,
-  },
-  welcome:     { fontSize: 20, fontWeight: '600', color: colors.text },
-  signOutText: { fontSize: 12, fontWeight: '400', color: colors.textFaint },
-
-  planBtn: {
-    backgroundColor: colors.good,
-    borderRadius: 11,
-    paddingVertical: 15,
-    paddingHorizontal: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    shadowColor: colors.good,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  planBtnText: { fontSize: 15, fontWeight: '500', color: '#fff' },
-  planChev:    { fontSize: 20, color: 'rgba(255,255,255,0.7)', lineHeight: 22 },
-
-  stravaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  // Search bar overlay
+  searchOverlay: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingHorizontal: 16 },
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
     backgroundColor: colors.white,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    padding: 13,
+    borderRadius: 14,
+    paddingVertical: 11, paddingHorizontal: 14,
+    marginTop: 8,
+    shadowColor: '#1e3a8a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 6,
   },
-  stravaLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+  searchIcon:       { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  searchIconDot:    { width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff' },
+  searchPlaceholder:{ flex: 1, fontSize: 13, fontWeight: '400', color: colors.textMuted },
+  searchRight:      { flexShrink: 0 },
+  searchBtn:        { backgroundColor: colors.primaryLight, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 4 },
+  searchBtnText:    { fontSize: 11, fontWeight: '600', color: colors.primary },
+
+  // Map controls
+  mapControls: { position: 'absolute', right: 14, bottom: 16, alignItems: 'center' },
+  mapCtrlBtn: {
+    width: 38, height: 38,
+    backgroundColor: colors.white, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#1e3a8a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6, elevation: 4,
+  },
+  mapCtrlBtnBorder: { borderTopWidth: 0.5, borderTopColor: colors.borderLight },
+  mapCtrlText:      { fontSize: 18, fontWeight: '300', color: colors.text, lineHeight: 22 },
+
+  // Bottom sheet
+  sheet: {
     flex: 1,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    marginTop: -20,
+    shadowColor: '#1e3a8a', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 8,
   },
-  statusDot:        { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
-  stravaLabel:      { fontSize: 13, fontWeight: '500', color: colors.text, marginBottom: 1 },
-  stravaSub:        { fontSize: 11, fontWeight: '300', color: colors.textMuted },
-  stravaErr:        { fontSize: 10, fontWeight: '300', color: colors.warn, marginTop: 2 },
-  stravaActionOrange: { fontSize: 12.5, fontWeight: '500', color: '#fc4c02' },
+  handle: {
+    width: 36, height: 4, borderRadius: 2, backgroundColor: colors.borderLight,
+    alignSelf: 'center', marginTop: 10, marginBottom: 4,
+  },
+
+  // Sheet header
+  sheetHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 14,
+  },
+  sheetIconWrap: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center',
+  },
+  sheetIcon:       { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.primary },
+  sheetTitleWrap:  { flex: 1 },
+  sheetTitle:      { fontSize: 15, fontWeight: '600', color: colors.text },
+  sheetSubtitle:   { fontSize: 11, fontWeight: '400', color: colors.textMuted, marginTop: 1 },
+  sheetMenuBtn:    { padding: 4 },
+  sheetMenuText:   { fontSize: 18, fontWeight: '600', color: colors.textMid, letterSpacing: 1 },
+
+  // Actions card
+  actionsCard: {
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: colors.white,
+    borderRadius: 14, borderWidth: 1, borderColor: colors.borderLight,
+    shadowColor: '#1e3a8a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 2,
+    overflow: 'hidden',
+  },
+  actionRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 13 },
+  actionDivider:    { height: 0.5, backgroundColor: colors.borderLight, marginLeft: 52 },
+  actionIconWrap:   { width: 28, height: 28, borderRadius: 8, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  actionIconNeutral:{ backgroundColor: colors.bgDeep },
+  actionIconPlus:   { fontSize: 18, fontWeight: '300', color: '#fff', lineHeight: 22 },
+  actionIconSymbol: { fontSize: 14, color: colors.textMid, lineHeight: 18 },
+  actionLabel:      { fontSize: 13, fontWeight: '500', color: colors.text },
+
+  // Section label
+  sectionLabel: {
+    paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6,
+    fontSize: 10, fontWeight: '600', color: colors.textMuted,
+    textTransform: 'uppercase', letterSpacing: 0.7,
+  },
+
+  // Strava row
+  stravaRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 16,
+    backgroundColor: colors.white,
+    borderRadius: 14, borderWidth: 1, borderColor: colors.borderLight,
+    padding: 14,
+  },
+  stravaLeft:         { flex: 1 },
+  statusDot:          { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  stravaLabel:        { fontSize: 13, fontWeight: '500', color: colors.text, marginBottom: 1 },
+  stravaSub:          { fontSize: 11, fontWeight: '400', color: colors.textMuted },
+  stravaErr:          { fontSize: 10, fontWeight: '400', color: colors.warn, marginTop: 2 },
+  stravaActionBlue:   { fontSize: 12.5, fontWeight: '600', color: colors.primary },
   stravaActionMuted:  { fontSize: 12.5, fontWeight: '400', color: colors.textMuted },
 });

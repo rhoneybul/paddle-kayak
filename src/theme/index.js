@@ -3,38 +3,42 @@
 // Colour only for meaning (good/caution/warn), never decoration.
 
 export const colors = {
-  bg:           '#f2f1ed',   // app background
-  bgDeep:       '#e8e6e0',   // sunken areas
+  bg:           '#f5f6f8',   // app background
+  bgDeep:       '#eceef3',   // sunken areas
   white:        '#ffffff',
-  border:       '#dad7d0',   // strong border
-  borderLight:  '#eceae5',   // subtle divider
-  text:         '#1a1a1a',   // primary text
-  textMid:      '#5a5550',   // secondary text
-  textMuted:    '#9a9590',   // labels / captions
-  textFaint:    '#b8b4ae',   // placeholders
+  border:       '#e0e4ef',   // strong border
+  borderLight:  '#edf0f7',   // subtle divider
+  text:         '#111827',   // primary text
+  textMid:      '#4b5563',   // secondary text
+  textMuted:    '#9ca3af',   // labels / captions
+  textFaint:    '#d1d5db',   // placeholders
+  // Primary action colour
+  primary:      '#2563EB',
+  primaryLight: '#eff4ff',
+  primaryDark:  '#1d4ed8',
   // Functional status — use sparingly
-  good:         '#3a6a4a',
-  goodLight:    '#edf3ee',
-  caution:      '#8a6a2a',
-  cautionLight: '#faf5eb',
-  cautionBorder:'#e8ddb8',
-  warn:         '#8a4a3a',
-  warnLight:    '#faf0ee',
-  warnBorder:   '#e8ccc0',
-  blue:         '#4a6a8a',
-  blueLight:    '#eef2f8',
+  good:         '#16a34a',
+  goodLight:    '#f0fdf4',
+  caution:      '#d97706',
+  cautionLight: '#fffbeb',
+  cautionBorder:'#fde68a',
+  warn:         '#dc2626',
+  warnLight:    '#fef2f2',
+  warnBorder:   '#fecaca',
+  blue:         '#2563EB',
+  blueLight:    '#eff4ff',
   camp:         '#8a5a2a',
   campLight:    '#8a5a2a18',
   sos:          '#7a2020',
   // Map palette
-  mapWater:     '#b5ccde',
-  mapLand:      '#d5ccb4',
-  mapLandShore: '#d2caaf',
-  mapLandBorder:'#c2b895',
-  mapGreen:     '#beca96',
-  mapDeepWater: '#a8c4d8',
-  mapRoute:     '#3a6a4a',
-  mapRouteAlt:  '#8a8a7a',
+  mapWater:     '#bfdbfe',
+  mapLand:      '#e5e7eb',
+  mapLandShore: '#d1d5db',
+  mapLandBorder:'#9ca3af',
+  mapGreen:     '#bbf7d0',
+  mapDeepWater: '#93c5fd',
+  mapRoute:     '#2563EB',
+  mapRouteAlt:  '#9ca3af',
 };
 
 export const font = {
@@ -58,33 +62,33 @@ export const text = {
 };
 
 export const layout = {
-  pagePad:    12,
-  cardRadius: 9,
+  pagePad:    16,
+  cardRadius: 14,
   cardShadow: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 0.5 },
-    shadowOpacity: 0.07,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowColor: '#1e3a8a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   card: (extra = {}) => ({
     backgroundColor: '#ffffff',
-    borderRadius: 9,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#eceae5',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 0.5 },
-    shadowOpacity: 0.07,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: '#edf0f7',
+    shadowColor: '#1e3a8a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
     ...extra,
   }),
 };
 
 // Shared handle for bottom sheets
 export const sheetHandle = {
-  width: 26, height: 3, borderRadius: 2,
-  backgroundColor: '#c8c4bc',
+  width: 36, height: 4, borderRadius: 2,
+  backgroundColor: '#d1d5db',
   alignSelf: 'center',
-  marginTop: 6, marginBottom: 4,
+  marginTop: 8, marginBottom: 6,
 };
