@@ -7,7 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import { SheetHandle, SectionHeader, AlertBanner, PrimaryButton, CampsiteCard, TabBar } from '../components/UI';
 import MapSketch from '../components/MapSketch';
-import { planPaddleWithWeather, hasApiKey } from '../services/claudeService';
+import { planPaddle, hasApiKey } from '../services/claudeService';
+import { formatProficiencyForPrompt } from '../services/stravaService';
 
 const EXAMPLES = [
   "I'm in Axminster and want to go for a day paddle tomorrow for about 2 hours",
@@ -17,30 +18,10 @@ const EXAMPLES = [
   "I want to plan a week-long kayak expedition. Based in the Scottish Highlands",
 ];
 
-/** Route-style labels for the three-tab selector (Scenic / Fast / Coastal). */
-const ROUTE_STYLE_LABELS = ['Scenic', 'Fast', 'Coastal'];
+export default function PlannerScreen({ navigation, route }) {
+  const proficiency = route?.params?.proficiency || null;
+  const tripType    = route?.params?.tripType || null;
 
-/** Map a difficulty_rating value to a colour key used by the existing theme. */
-function difficultyColor(rating) {
-  if (rating === 'beginner') return { bg: colors.goodLight, fg: colors.good };
-  if (rating === 'intermediate') return { bg: colors.blueLight, fg: colors.blue };
-  if (rating === 'advanced') return { bg: colors.cautionLight, fg: colors.caution };
-  if (rating === 'expert') return { bg: colors.warnLight, fg: colors.warn };
-  // Fallback for legacy "easy | moderate | challenging" values
-  if (rating === 'easy') return { bg: colors.goodLight, fg: colors.good };
-  if (rating === 'moderate') return { bg: colors.cautionLight, fg: colors.caution };
-  return { bg: colors.warnLight, fg: colors.warn };
-}
-
-/** Loading-progress messages shown in sequence while waiting for Claude. */
-const LOADING_MESSAGES = [
-  'Analysing weather conditions…',
-  'Finding the best routes…',
-  'Mapping waypoints…',
-  'Almost there…',
-];
-
-export default function PlannerScreen({ navigation }) {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState(LOADING_MESSAGES[0]);
@@ -82,7 +63,17 @@ export default function PlannerScreen({ navigation }) {
     }, 4000);
 
     try {
-      const result = await planPaddleWithWeather({ prompt: input });
+      // Build enriched prompt with proficiency context
+      let enrichedInput = input;
+      if (proficiency) {
+        const profStr = formatProficiencyForPrompt(proficiency);
+        enrichedInput = `${input}\n\nPaddler proficiency: ${profStr}`;
+      }
+      if (tripType) {
+        enrichedInput += `\nTrip type: ${tripType.label} (${tripType.sub})`;
+      }
+
+      const result = await planPaddle(enrichedInput);
       setPlan(result);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {
