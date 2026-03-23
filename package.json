@@ -7,6 +7,7 @@
     "dev:app": "npx expo start",
     "dev:web": "npx expo start --web",
     "dev:server": "npm --prefix server run dev",
+    "test": "jest --forceExit",
     "setup": "npm install && npm --prefix server install && cp -n server/.env.example server/.env 2>/dev/null; cp -n .env.example .env 2>/dev/null; echo '\\n✅ Setup done. Fill in server/.env and .env with your API keys.'"
   },
   "dependencies": {
@@ -29,6 +30,21 @@
     "react-native-screens": "^4.24.0",
     "react-native-svg": "^15.15.4",
     "react-native-web": "~0.20.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
+    "babel-jest": "^29.7.0",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {
+      "^.+\\.js$": "babel-jest"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(expo-.*|@expo/.*|react-native.*|@react-native.*)/)"
+    ]
   },
   "overrides": {
     "react-native-web": {
