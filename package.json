@@ -7,6 +7,7 @@
     "dev:app": "npx expo start",
     "dev:web": "npx expo start --web",
     "dev:server": "npm --prefix server run dev",
+    "test": "jest",
     "setup": "npm install && npm --prefix server install && cp -n server/.env.example server/.env 2>/dev/null; cp -n .env.example .env 2>/dev/null; echo '\\n✅ Setup done. Fill in server/.env and .env with your API keys.'"
   },
   "dependencies": {
@@ -35,5 +36,11 @@
       "react": "19.2.0",
       "react-dom": "19.2.0"
     }
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
+    "babel-jest": "^30.3.0",
+    "jest": "^30.3.0"
   }
 }

@@ -8,6 +8,7 @@ import { colors } from '../theme';
 import { SheetHandle, SectionHeader, AlertBanner, PrimaryButton, CampsiteCard, TabBar } from '../components/UI';
 import MapSketch from '../components/MapSketch';
 import { planPaddle, hasApiKey } from '../services/claudeService';
+import { formatProficiencyForPrompt } from '../services/stravaService';
 
 const EXAMPLES = [
   "I'm in Axminster and want to go for a day paddle tomorrow for about 2 hours",
@@ -17,7 +18,10 @@ const EXAMPLES = [
   "I want to plan a week-long kayak expedition. Based in the Scottish Highlands",
 ];
 
-export default function PlannerScreen({ navigation }) {
+export default function PlannerScreen({ navigation, route }) {
+  const proficiency = route?.params?.proficiency || null;
+  const tripType    = route?.params?.tripType || null;
+
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [plan, setPlan] = useState(null);
@@ -45,7 +49,17 @@ export default function PlannerScreen({ navigation }) {
     setActiveTab('routes');
 
     try {
-      const result = await planPaddle(input);
+      // Build enriched prompt with proficiency context
+      let enrichedInput = input;
+      if (proficiency) {
+        const profStr = formatProficiencyForPrompt(proficiency);
+        enrichedInput = `${input}\n\nPaddler proficiency: ${profStr}`;
+      }
+      if (tripType) {
+        enrichedInput += `\nTrip type: ${tripType.label} (${tripType.sub})`;
+      }
+
+      const result = await planPaddle(enrichedInput);
       setPlan(result);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {

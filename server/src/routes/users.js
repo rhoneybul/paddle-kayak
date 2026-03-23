@@ -35,7 +35,7 @@ router.get('/me', async (req, res, next) => {
 // PATCH /api/users/me — update profile
 router.patch('/me', async (req, res, next) => {
   try {
-    const allowed = ['display_name', 'skill_level', 'strava_id', 'preferences', 'home_location_name', 'home_lat', 'home_lon'];
+    const allowed = ['display_name', 'skill_level', 'strava_id', 'preferences', 'home_location_name', 'home_lat', 'home_lon', 'proficiency_data'];
     const updates = Object.fromEntries(
       Object.entries(req.body).filter(([k]) => allowed.includes(k))
     );
