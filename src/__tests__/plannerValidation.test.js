@@ -1,5 +1,6 @@
 /**
  * Tests for PlannerScreen validation functions — date and duration validation.
+ * Updated to cover optional date (Ticket 2) and new validation logic.
  */
 
 jest.mock('react-native', () => ({
@@ -20,9 +21,11 @@ jest.mock('react-native', () => ({
   TextInput: 'TextInput',
   TouchableOpacity: 'TouchableOpacity',
   ScrollView: 'ScrollView',
+  Modal: 'Modal',
   Keyboard: { dismiss: jest.fn() },
   Alert: { alert: jest.fn() },
   PanResponder: { create: jest.fn(() => ({ panHandlers: {} })) },
+  RefreshControl: 'RefreshControl',
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -49,11 +52,31 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn().mockResolvedValue(null),
   setItem: jest.fn().mockResolvedValue(undefined),
   multiRemove: jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn(),
 }));
+
+jest.mock('expo-linking', () => ({
+  canOpenURL: jest.fn().mockResolvedValue(false),
+  openURL: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../components/PaddleMap', () => {
+  const PaddleMap = 'PaddleMap';
+  PaddleMap.parseGpx = jest.fn(() => []);
+  PaddleMap.gpxRouteBearing = jest.fn(() => null);
+  return {
+    __esModule: true,
+    default: PaddleMap,
+    parseGpx: jest.fn(() => []),
+    gpxRouteBearing: jest.fn(() => null),
+  };
+});
+
+jest.mock('../components/ConditionsTimeline', () => 'ConditionsTimeline');
 
 const { isDateValid, isDurationValid } = require('../screens/PlannerScreen');
 
@@ -93,6 +116,17 @@ describe('PlannerScreen validation', () => {
         String(tomorrow.getMonth() + 1).padStart(2, '0') + '-' +
         String(tomorrow.getDate()).padStart(2, '0');
       expect(isDateValid(dateStr)).toBe(true);
+    });
+
+    test('null date signals "Plan for Later" mode', () => {
+      // null is a valid UI state for "Plan for Later", but isDateValid returns false
+      // to indicate no date has been chosen yet
+      expect(isDateValid(null)).toBe(false);
+    });
+
+    test('returns false for invalid date string', () => {
+      expect(isDateValid('not-a-date')).toBe(false);
+      expect(isDateValid('2025-13-40')).toBe(false);
     });
   });
 

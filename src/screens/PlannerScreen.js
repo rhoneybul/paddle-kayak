@@ -2,12 +2,14 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Animated, Keyboard, Alert, Platform, Modal,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { colors } from '../theme';
 import {
   SectionHeader, AlertBanner, ProgressBar, SegmentedControl,
+  ErrorState, HeartIcon, NavigateToStartButton,
 } from '../components/UI';
 import PaddleMap from '../components/PaddleMap';
 import ConditionsTimeline from '../components/ConditionsTimeline';
@@ -16,7 +18,8 @@ import { planPaddleWithWeather, hasApiKey } from '../services/claudeService';
 import { SKILL_LEVELS, getStravaTokens, fetchStravaActivities, inferSkillFromStrava } from '../services/stravaService';
 import { searchLocations, MIN_SEARCH_LENGTH, SEARCH_DEBOUNCE_MS } from '../services/geocodingService';
 import { getWeatherWithCache } from '../services/weatherService';
-import { saveRoute } from '../services/storageService';
+import { saveRoute, isRouteSaved, toggleFavorite } from '../services/storageService';
+import { extractStartCoords, navigateToStart } from '../utils/navigation';
 
 // Native date picker — not available on web
 let DateTimePicker = null;
@@ -68,7 +71,17 @@ function getTodayString() {
 }
 
 export function isDateValid(dateStr) {
-  return !!dateStr && dateStr.length === 10;
+  if (!dateStr) return false;
+  if (dateStr.length !== 10) return false;
+  const d = new Date(dateStr + 'T12:00:00');
+  if (isNaN(d.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d >= today;
+}
+
+export function isDurationValid(hours) {
+  return typeof hours === 'number' && hours > 0;
 }
 
 function formatDateLabel(dateStr) {
@@ -93,7 +106,7 @@ function dateToString(d) {
 
 
 export default function PlannerScreen({ navigation }) {
-  // Date state
+  // Date state — null means "Plan for Later"
   const [tripDate, setTripDate]           = useState(getTodayString());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -142,6 +155,15 @@ export default function PlannerScreen({ navigation }) {
   const [saveNameInput, setSaveNameInput]   = useState('');
   const [saving, setSaving]                 = useState(false);
 
+  // Error state (Ticket 4)
+  const [planError, setPlanError]           = useState(null);
+
+  // Refresh state (Ticket 5)
+  const [refreshing, setRefreshing]         = useState(false);
+
+  // Favorite state (Ticket 3) — map of route name → saved route obj
+  const [favorites, setFavorites]           = useState({});
+
   // GPS prefill
   useEffect(() => {
     (async () => {
@@ -188,9 +210,9 @@ export default function PlannerScreen({ navigation }) {
     })();
   }, []);
 
-  // Fetch weather when location changes
+  // Fetch weather when location changes (skip if no date — Ticket 2)
   useEffect(() => {
-    if (!locationCoords) { setWeatherData(null); return; }
+    if (!locationCoords || !tripDate) { setWeatherData(null); return; }
     let cancelled = false;
     (async () => {
       setWeatherLoading(true);
@@ -204,7 +226,7 @@ export default function PlannerScreen({ navigation }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [locationCoords?.lat, locationCoords?.lng]);
+  }, [locationCoords?.lat, locationCoords?.lng, tripDate]);
 
   // Debounced location search
   const handleDestinationChange = useCallback((text) => {
@@ -249,6 +271,7 @@ export default function PlannerScreen({ navigation }) {
       `I have access to ${transport.toLowerCase()}`,
       `My skill level is ${skillLevel.label.toLowerCase()}`,
     ];
+    if (!tripDate) parts.push('No specific date — planning for a future trip');
     if (selectedStops.length > 0) parts.push(`I'd like stops for: ${selectedStops.join(', ').toLowerCase()}`);
     if (previousPaddle) parts.push(`My last paddle was "${previousPaddle.name}" (${previousPaddle.distance} km on ${previousPaddle.date})`);
     return parts.join('. ') + '.';
@@ -257,7 +280,7 @@ export default function PlannerScreen({ navigation }) {
   const handleGenerate = async () => {
     Keyboard.dismiss();
     if (!destination.trim()) return;
-if (startHour >= endHour) {
+    if (startHour >= endHour) {
       Alert.alert('Invalid Time', 'End time must be after start time.');
       return;
     }
@@ -266,6 +289,7 @@ if (startHour >= endHour) {
     setPrompt(input);
     setLoading(true);
     setPlan(null);
+    setPlanError(null);
     fadeAnim.setValue(0);
     setSelectedRouteIdx(0);
     setExpandedRoute(-1);
@@ -284,7 +308,7 @@ if (startHour >= endHour) {
         prompt: input,
         lat: locationCoords?.lat,
         lon: locationCoords?.lng,
-        date: tripDate,
+        date: tripDate || undefined,
         durationHrs: paddleDurationHrs,
         transport: transport.toLowerCase().replace(' ', '_'),
         interests: selectedStops.length > 0 ? selectedStops : undefined,
@@ -294,13 +318,51 @@ if (startHour >= endHour) {
       setLoadingPct(100);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {
-      Alert.alert('Could not plan paddle', e.message);
+      const errorType = e.message?.includes('timed out') ? 'server'
+        : e.message?.includes('network') || e.message?.includes('Network') ? 'network'
+        : 'default';
+      setPlanError(errorType);
     } finally {
       clearInterval(loadingMsgRef.current);
       loadingMsgRef.current = null;
       setLoading(false);
     }
   };
+
+  // Pull-to-refresh handler (Ticket 5) — re-fetches weather data
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (locationCoords && tripDate) {
+        const weather = await getWeatherWithCache(locationCoords.lat, locationCoords.lng);
+        setWeatherData(weather);
+      }
+    } catch (_) { /* ignore refresh errors */ }
+    finally { setRefreshing(false); }
+  }, [locationCoords, tripDate]);
+
+  // Toggle favorite handler (Ticket 3)
+  const handleToggleFavorite = useCallback(async (route) => {
+    const name = route.name || 'Unnamed route';
+    const routeWithMeta = { ...route, location: plan?.location?.base || destination, locationCoords };
+    const result = await toggleFavorite(routeWithMeta, name);
+    setFavorites(prev => {
+      const next = { ...prev };
+      if (result.saved) { next[name] = result.route; }
+      else { delete next[name]; }
+      return next;
+    });
+  }, [plan, destination, locationCoords]);
+
+  // Navigate to start handler (Ticket 1)
+  const handleNavigateToStart = useCallback((route) => {
+    const coords = extractStartCoords(route);
+    if (!coords) {
+      Alert.alert('No Start Location', 'Route coordinates are not available.');
+      return;
+    }
+    navigateToStart(coords.lat, coords.lng);
+  }, []);
 
   const reset = () => {
     setPlan(null); setPrompt(''); fadeAnim.setValue(0);
@@ -334,6 +396,9 @@ if (startHour >= endHour) {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={s.scrollContent}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+            }
           >
             {/* Location */}
             <SectionHeader>Destination / Region</SectionHeader>
@@ -375,13 +440,23 @@ if (startHour >= endHour) {
               </View>
             )}
 
-            {/* Date */}
+            {/* Date — with "Plan for Later" null option (Ticket 2) */}
             <SectionHeader>Trip Date</SectionHeader>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={s.dateStrip}
             >
+              {/* Plan for Later chip */}
+              <TouchableOpacity
+                style={[s.dateDayChip, !tripDate && s.dateDayChipActive, { minWidth: 60 }]}
+                onPress={() => setTripDate(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={[s.dateDayName, !tripDate && s.dateDayNameActive]}>Later</Text>
+                <Text style={[s.dateDayNum, !tripDate && s.dateDayNumActive, { fontSize: 13 }]}>{'\u2014'}</Text>
+                <View style={[s.weatherDot, s.weatherDotNone]} />
+              </TouchableOpacity>
               {DATE_STRIP.map((dateStr) => {
                 const isSelected = tripDate === dateStr;
                 const hasWeather = weatherDates.has(dateStr);
@@ -517,8 +592,15 @@ if (startHour >= endHour) {
               ))}
             </View>
 
-            {/* Weather forecast */}
-            {/* Conditions timeline — only when location + date are both set */}
+            {/* Weather forecast — hidden when no date selected (Ticket 2) */}
+            {locationCoords && !tripDate && (
+              <>
+                <SectionHeader>Conditions</SectionHeader>
+                <View style={s.weatherCard}>
+                  <Text style={s.weatherNoForecast}>Select a date to see conditions</Text>
+                </View>
+              </>
+            )}
             {locationCoords && tripDate && (
               <>
                 <SectionHeader>Conditions</SectionHeader>
@@ -617,7 +699,7 @@ if (startHour >= endHour) {
         <View style={s.logoBadge}><Text style={s.logoEmoji}>🛶</Text></View>
         <Text style={s.loadTitle}>Planning your paddle…</Text>
         <Text style={s.loadPrompt} numberOfLines={2}>
-          {destination} · {formatDateLabel(tripDate)} · {hrLabel(startHour)}–{hrLabel(endHour)} · {skillLevel.label}
+          {destination} · {tripDate ? formatDateLabel(tripDate) : 'Flexible date'} · {hrLabel(startHour)}{'\u2013'}{hrLabel(endHour)} · {skillLevel.label}
         </Text>
         <View style={{ width: 200, marginTop: 8 }}>
           <ProgressBar startLabel="Analysing" endLabel="Done" pct={loadingPct} color={colors.primary} />
@@ -626,6 +708,23 @@ if (startHour >= endHour) {
         <View style={s.dotsRow}>
           <LoadDot delay={0} /><LoadDot delay={200} /><LoadDot delay={400} />
         </View>
+      </View>
+    );
+  }
+
+  // ── ERROR STATE (Ticket 4) ──────────────────────────────────────────────
+  if (planError && !plan) {
+    return (
+      <View style={s.container}>
+        <SafeAreaView style={s.safe}>
+          <View style={s.nav}>
+            <TouchableOpacity onPress={reset} style={s.back}>
+              <Text style={s.backText}>{'\u2039'}</Text>
+            </TouchableOpacity>
+            <Text style={s.navTitle}>Plan a Paddle</Text>
+          </View>
+          <ErrorState type={planError} onRetry={handleGenerate} />
+        </SafeAreaView>
       </View>
     );
   }
@@ -705,7 +804,14 @@ if (startHour >= endHour) {
                   activeOpacity={0.7}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={s.routeName}>{r.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[s.routeName, { flex: 1 }]}>{r.name}</Text>
+                      <HeartIcon
+                        filled={!!favorites[r.name]}
+                        size={20}
+                        onPress={() => handleToggleFavorite(r)}
+                      />
+                    </View>
                     {r.description ? (
                       <Text style={s.routeDescInline} numberOfLines={expanded ? 0 : 2}>{r.description}</Text>
                     ) : null}
@@ -750,6 +856,13 @@ if (startHour >= endHour) {
                   </View>
                 )}
 
+                {/* Navigate to Start (Ticket 1) */}
+                <NavigateToStartButton
+                  onPress={() => handleNavigateToStart(r)}
+                  disabled={!r.waypoints || r.waypoints.length === 0}
+                  style={{ margin: 10, marginBottom: 0 }}
+                />
+
                 <TouchableOpacity
                   style={s.saveRouteBtn}
                   onPress={() => {
@@ -767,9 +880,9 @@ if (startHour >= endHour) {
           {/* ── Summary strip ── */}
           <View style={s.summaryStrip}>
             {[
-              ['Date',   formatDateLabel(tripDate)],
-              ['Window', `${hrLabel(startHour)}–${hrLabel(endHour)}`],
-              ['Skill',  plan.conditions?.skillLevel || '—'],
+              ['Date',   tripDate ? formatDateLabel(tripDate) : 'Flexible'],
+              ['Window', `${hrLabel(startHour)}\u2013${hrLabel(endHour)}`],
+              ['Skill',  plan.conditions?.skillLevel || '\u2014'],
             ].map(([label, value], i) => (
               <View key={label} style={[s.summaryCell, i < 2 && s.summaryCellBorder]}>
                 <Text style={s.summaryCellLabel}>{label}</Text>
@@ -778,8 +891,19 @@ if (startHour >= endHour) {
             ))}
           </View>
 
+          {/* ── "Check Conditions for a Date" banner when date is null (Ticket 2) ── */}
+          {!tripDate && (
+            <TouchableOpacity
+              style={s.checkConditionsBanner}
+              onPress={() => { setTripDate(getTodayString()); }}
+              activeOpacity={0.85}
+            >
+              <Text style={s.checkConditionsText}>Check Conditions for a Date</Text>
+            </TouchableOpacity>
+          )}
+
           {/* ── Weather through the day ── */}
-          {plan._weather?.hourly && plan._weather.hourly.length > 0 && (
+          {tripDate && plan._weather?.hourly && plan._weather.hourly.length > 0 && (
             <ConditionsTimeline
               hourly={plan._weather.hourly}
               date={tripDate}
@@ -1071,6 +1195,10 @@ const s = StyleSheet.create({
   durationChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   durationChipText:   { fontSize: 13, fontWeight: '500', color: colors.textMid },
   durationChipTextActive: { color: '#fff', fontWeight: '600' },
+
+  // Check conditions banner (Ticket 2)
+  checkConditionsBanner: { marginHorizontal: P, marginBottom: 8, backgroundColor: colors.primaryLight, borderRadius: 9, paddingVertical: 12, paddingHorizontal: 14, alignItems: 'center', borderWidth: 1, borderColor: colors.borderLight },
+  checkConditionsText:   { fontSize: 13, fontWeight: '600', color: colors.primary },
 
   // Save modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },

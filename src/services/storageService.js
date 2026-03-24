@@ -17,6 +17,7 @@ const KEYS = {
   PADDLE_LOG:    'PADDLE_ACTIVE_LOG',
   PROFILE:       'PADDLE_PROFILE',
   SAVED_ROUTES:  'PADDLE_SAVED_ROUTES',
+  PENDING_SYNC:  'PADDLE_PENDING_SYNC',
 };
 
 // ── Active trip (in-progress paddle) ─────────────────────────────────────────
@@ -299,10 +300,76 @@ export async function deleteSavedRoute(id) {
   const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
   const routes = cached ? JSON.parse(cached) : [];
   const target = routes.find(r => r.id === id || r.serverId === id);
-  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes.filter(r => r.id !== id)));
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes.filter(r => r.id !== id && r.serverId !== id)));
   // Background delete from server
   const serverId = target?.serverId;
   if (serverId) {
-    try { await api.savedRoutes.delete(serverId); } catch (_) {}
+    try { await api.savedRoutes.delete(serverId); } catch (_) {
+      // Queue for later if offline
+      await queuePendingSync({ action: 'delete_route', id: serverId });
+    }
+  }
+}
+
+// ── Favorite toggling (optimistic UI with offline queue) ─────────────────────
+
+/**
+ * Check if a route is already saved (by name + waypoints match or serverId).
+ */
+export async function isRouteSaved(routeName, waypoints) {
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  return routes.find(r =>
+    r.name === routeName ||
+    (r.serverId && r.name === routeName)
+  ) || null;
+}
+
+/**
+ * Toggle favorite: saves if not saved, deletes if already saved.
+ * Returns { saved: boolean, route: object|null }
+ */
+export async function toggleFavorite(route, customName) {
+  const name = customName || route.name || 'Unnamed route';
+  const existing = await isRouteSaved(name);
+
+  if (existing) {
+    await deleteSavedRoute(existing.id || existing.serverId);
+    return { saved: false, route: null };
+  } else {
+    const saved = await saveRoute(route, name);
+    return { saved: true, route: saved };
+  }
+}
+
+// ── Pending sync queue (offline actions) ────────────────────────────────────
+
+async function queuePendingSync(action) {
+  const raw = await AsyncStorage.getItem(KEYS.PENDING_SYNC);
+  const queue = raw ? JSON.parse(raw) : [];
+  queue.push({ ...action, queuedAt: Date.now() });
+  await AsyncStorage.setItem(KEYS.PENDING_SYNC, JSON.stringify(queue));
+}
+
+export async function flushPendingSyncs() {
+  const raw = await AsyncStorage.getItem(KEYS.PENDING_SYNC);
+  if (!raw) return;
+  const queue = JSON.parse(raw);
+  const remaining = [];
+
+  for (const item of queue) {
+    try {
+      if (item.action === 'delete_route' && item.id) {
+        await api.savedRoutes.delete(item.id);
+      }
+    } catch (_) {
+      remaining.push(item);
+    }
+  }
+
+  if (remaining.length > 0) {
+    await AsyncStorage.setItem(KEYS.PENDING_SYNC, JSON.stringify(remaining));
+  } else {
+    await AsyncStorage.removeItem(KEYS.PENDING_SYNC);
   }
 }

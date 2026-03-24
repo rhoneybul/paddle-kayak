@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { SectionHeader, PrimaryButton } from '../components/UI';
+import { SectionHeader, PrimaryButton, ErrorState } from '../components/UI';
 import { getHistory } from '../services/storageService';
 
 const fmtDur = s => { const h = Math.floor(s/3600), m = Math.floor((s%3600)/60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
@@ -11,10 +11,28 @@ const fmtDate = ts => new Date(ts).toLocaleDateString('en-GB', { weekday: 'short
 export default function HistoryScreen({ navigation }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    getHistory().then(h => { setHistory(h); setLoading(false); });
+  const loadData = useCallback(async () => {
+    try {
+      setError(null);
+      const h = await getHistory();
+      setHistory(h);
+    } catch (e) {
+      setError(e.message?.includes('network') || e.message?.includes('Network') ? 'network' : 'default');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData();
+  }, [loadData]);
 
   const totalKm = history.reduce((sum, t) => sum + (t.distancePaddled || 0), 0);
   const totalHrs = history.reduce((sum, t) => sum + (t.durationSeconds || 0), 0) / 3600;
@@ -37,6 +55,8 @@ export default function HistoryScreen({ navigation }) {
 
         {loading ? (
           <View style={s.center}><ActivityIndicator color={colors.good} /></View>
+        ) : error ? (
+          <ErrorState type={error} onRetry={loadData} />
         ) : history.length === 0 ? (
           <View style={s.center}>
             <Text style={s.emptyTitle}>No trips yet</Text>
@@ -44,7 +64,12 @@ export default function HistoryScreen({ navigation }) {
             <PrimaryButton label="Plan your first trip →" onPress={() => navigation.navigate('Planner')} style={{ marginTop: 16, marginHorizontal: 0 }} />
           </View>
         ) : (
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+            }
+          >
 
             {/* Summary */}
             <View style={s.summary}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
@@ -9,6 +9,7 @@ import { getWeatherWithCache } from '../services/weatherService';
 import PaddleMap from '../components/PaddleMap';
 import ConditionsTimeline from '../components/ConditionsTimeline';
 import { gpxRouteBearing } from '../components/PaddleMap';
+import { HeartIcon } from '../components/UI';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export default function SavedRoutesScreen({ navigation }) {
   const [viewDate, setViewDate]           = useState(getTodayString());
   const [weather, setWeather]             = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [refreshing, setRefreshing]       = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +60,12 @@ export default function SavedRoutesScreen({ navigation }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
 
   // Fetch weather when selected route changes
   useEffect(() => {
@@ -124,7 +132,13 @@ export default function SavedRoutesScreen({ navigation }) {
           />
 
           {/* Scrollable content */}
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 48 }}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+            }
+          >
             {/* Stats strip */}
             <View style={s.metaStrip}>
               {[
@@ -261,6 +275,9 @@ export default function SavedRoutesScreen({ navigation }) {
             data={routes}
             keyExtractor={r => r.id}
             contentContainerStyle={s.list}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+            }
             renderItem={({ item: r }) => (
               <TouchableOpacity style={s.routeCard} onPress={() => setSelected(r)} activeOpacity={0.85}>
                 {/* Map thumbnail */}
@@ -273,11 +290,15 @@ export default function SavedRoutesScreen({ navigation }) {
                     routes={[r]}
                     selectedIdx={0}
                   />
+                  {/* Heart icon overlay (Ticket 3) */}
+                  <View style={s.heartOverlay}>
+                    <HeartIcon filled size={20} />
+                  </View>
                 </View>
                 {/* Route info */}
                 <View style={s.routeInfo}>
                   <Text style={s.routeName} numberOfLines={1}>{r.name}</Text>
-                  <Text style={s.routeLocation} numberOfLines={1}>{r.location || r.launchPoint || '—'}</Text>
+                  <Text style={s.routeLocation} numberOfLines={1}>{r.location || r.launchPoint || '\u2014'}</Text>
                   <View style={s.routeMeta}>
                     {r.distanceKm  ? <View style={s.metaChip}><Text style={s.metaChipText}>{r.distanceKm} km</Text></View> : null}
                     {r.estimated_duration ? <View style={s.metaChip}><Text style={s.metaChipText}>~{r.estimated_duration}h</Text></View> : null}
@@ -285,7 +306,7 @@ export default function SavedRoutesScreen({ navigation }) {
                     {r.difficulty  ? <View style={s.metaChip}><Text style={s.metaChipText}>{r.difficulty}</Text></View> : null}
                   </View>
                 </View>
-                <Text style={s.chevron}>›</Text>
+                <Text style={s.chevron}>{'\u203A'}</Text>
               </TouchableOpacity>
             )}
           />
@@ -313,7 +334,8 @@ const s = StyleSheet.create({
   // List
   list:        { padding: P, gap: 10 },
   routeCard:   { backgroundColor: colors.white, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
-  mapThumb:    { overflow: 'hidden' },
+  mapThumb:    { overflow: 'hidden', position: 'relative' },
+  heartOverlay: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 14, padding: 4 },
   routeInfo:   { padding: P },
   routeName:   { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 2 },
   routeLocation: { fontSize: 11, fontWeight: '400', color: colors.textMuted, marginBottom: 7 },

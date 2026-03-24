@@ -29,6 +29,7 @@ export const colors = {
   blueLight:    '#eff4ff',
   camp:         '#8a5a2a',
   campLight:    '#8a5a2a18',
+  error:        '#dc2626',    // destructive / un-favorite
   sos:          '#7a2020',
   // Map palette
   mapWater:     '#bfdbfe',

@@ -262,9 +262,9 @@ export async function planPaddleWithWeather({
   const resolvedLat = location?.lat != null ? location.lat : lat;
   const resolvedLon = location?.lng != null ? location.lng : lon;
 
-  // ── 1. Fetch weather context (best-effort — don't fail if unavailable) ────
+  // ── 1. Fetch weather context (best-effort — skip if no date or unavailable) ─
   let weather = null;
-  if (resolvedLat != null && resolvedLon != null) {
+  if (resolvedLat != null && resolvedLon != null && date) {
     try {
       weather = await getWeatherWithCache(resolvedLat, resolvedLon);
     } catch {
@@ -277,10 +277,12 @@ export async function planPaddleWithWeather({
   // ── 2. Build enriched user message ────────────────────────────────────────
   const parts = [prompt];
 
-  // Temporal context — date and duration
+  // Temporal context — date and duration (date may be null for "Plan for Later")
   if (date) {
     const dateStr = typeof date === 'string' ? date : new Date(date).toLocaleDateString();
     parts.push(`\nTrip date: ${dateStr}`);
+  } else {
+    parts.push('\nNo specific date selected — provide general route suggestions without weather-specific advice.');
   }
   if (durationHrs) {
     const durationLabel = durationHrs === 1 ? '1 hour' : `${durationHrs} hours`;

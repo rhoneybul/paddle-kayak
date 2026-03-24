@@ -19,6 +19,7 @@
     "@react-navigation/stack": "^7.8.6",
     "@supabase/supabase-js": "^2.49.4",
     "expo": "~55.0.8",
+    "expo-linking": "~7.0.5",
     "expo-location": "^55.1.4",
     "expo-network": "^55.0.9",
     "expo-sensors": "^55.0.9",

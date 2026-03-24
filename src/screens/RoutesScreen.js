@@ -1,15 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import MapSketch from '../components/MapSketch';
 import {
   SheetHandle, SectionHeader, AlertBanner, PrimaryButton, MetricStrip,
-  ConditionLayer,
+  ConditionLayer, ErrorState, HeartIcon, NavigateToStartButton,
 } from '../components/UI';
 import { generateRoutes } from '../services/routeService';
-import { saveActiveTrip } from '../services/storageService';
+import { saveActiveTrip, toggleFavorite } from '../services/storageService';
 import { getWeatherWithCache as getWeather } from '../services/weatherService';
+import { extractStartCoords, navigateToStart } from '../utils/navigation';
 
 // SVG icons as simple text for condition layers
 const WindIcon  = () => <Text style={{ fontSize: 14 }}>{'\uD83D\uDCA8'}</Text>;
@@ -22,6 +23,9 @@ export default function RoutesScreen({ navigation, route }) {
   const [routeWeather, setRouteWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
+  const [dataError, setDataError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [favorites, setFavorites] = useState({});
 
   // Generate routes on mount
   useEffect(() => {
@@ -69,6 +73,39 @@ export default function RoutesScreen({ navigation, route }) {
   const windDir   = wx?.current?.windDirLabel ?? '';
   const precip    = wx?.current?.precipitation ?? 0;
   const temp      = wx?.current?.temp ?? '-';
+
+  // Pull-to-refresh (Ticket 5)
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setRouteWeather(null);
+    setWeatherError(null);
+    try { await fetchWeather(); }
+    catch (_) { /* handled in fetchWeather */ }
+    finally { setRefreshing(false); }
+  }, [fetchWeather]);
+
+  // Navigate to start (Ticket 1)
+  const handleNavigateToStart = useCallback((r) => {
+    const wp = r?.waypoints || [];
+    const coords = extractStartCoords(r);
+    if (!coords) {
+      Alert.alert('No Start Location', 'Route coordinates are not available.');
+      return;
+    }
+    navigateToStart(coords.lat, coords.lng);
+  }, []);
+
+  // Toggle favorite (Ticket 3)
+  const handleToggleFavorite = useCallback(async (r) => {
+    const name = r.name || 'Unnamed route';
+    const result = await toggleFavorite(r, name);
+    setFavorites(prev => {
+      const next = { ...prev };
+      if (result.saved) { next[name] = result.route; }
+      else { delete next[name]; }
+      return next;
+    });
+  }, []);
 
   const handleSelectRoute = async () => {
     const trip = {
@@ -125,7 +162,13 @@ export default function RoutesScreen({ navigation, route }) {
           }}
         />
 
-        <ScrollView style={s.sheet} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={s.sheet}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+          }
+        >
           <SheetHandle />
 
           {/* Safety score strip */}
@@ -200,6 +243,11 @@ export default function RoutesScreen({ navigation, route }) {
                   <Text style={[s.rankText, { color: i === 0 ? colors.good : i === 1 ? colors.blue : colors.caution }]}>{i + 1}</Text>
                 </View>
                 <Text style={s.routeName}>{r.name}</Text>
+                <HeartIcon
+                  filled={!!favorites[r.name]}
+                  size={18}
+                  onPress={() => handleToggleFavorite(r)}
+                />
                 <View style={[s.diffBadge, { backgroundColor: r.difficulty.color + '20' }]}>
                   <Text style={[s.diffText, { color: r.difficulty.color }]}>{r.difficulty.label}</Text>
                 </View>
@@ -266,6 +314,12 @@ export default function RoutesScreen({ navigation, route }) {
               </TouchableOpacity>
             </>
           )}
+
+          {/* Navigate to Start (Ticket 1) */}
+          <NavigateToStartButton
+            onPress={() => handleNavigateToStart(sel)}
+            disabled={!sel.waypoints || sel.waypoints?.length === 0}
+          />
 
           <PrimaryButton label="Select Route & Start Paddle \u2192" onPress={handleSelectRoute} style={{ marginTop: 8 }} />
           <View style={{ height: 32 }} />

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, PanResponder, Platform } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { colors, layout, text, sheetHandle } from '../theme';
 
 // ── Layout ────────────────────────────────────────────────────────────────────
@@ -295,6 +296,70 @@ export const SegmentedControl = ({ options, value, onChange, style }) => {
   );
 };
 
+// ── Error State ──────────────────────────────────────────────────────────────
+
+const ERROR_MESSAGES = {
+  network: { title: 'Network Offline', body: 'Please check your internet connection and try again.' },
+  session: { title: 'Session Expired', body: 'Your session has expired. Please sign in again.' },
+  server:  { title: 'Server Error', body: 'Something went wrong on our end. Please try again shortly.' },
+  default: { title: 'Something Went Wrong', body: 'We couldn\u2019t load the data. Please try again.' },
+};
+
+export const ErrorState = ({ type = 'default', onRetry, message, style }) => {
+  const info = ERROR_MESSAGES[type] || ERROR_MESSAGES.default;
+  return (
+    <View style={[s.errorStateWrap, style]}>
+      <View style={s.errorIconWrap}>
+        <Text style={s.errorIcon}>{'\u26A0\uFE0F'}</Text>
+      </View>
+      <Text style={s.errorTitle}>{message || info.title}</Text>
+      <Text style={s.errorBody}>{info.body}</Text>
+      {onRetry && (
+        <TouchableOpacity style={s.errorRetryBtn} onPress={onRetry} activeOpacity={0.85}>
+          <Text style={s.errorRetryText}>Retry</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+// ── Heart Icon ───────────────────────────────────────────────────────────────
+
+export const HeartIcon = ({ filled, size = 22, color, onPress, style }) => {
+  const fillColor = color || (filled ? colors.error : 'none');
+  const strokeColor = color || (filled ? colors.error : colors.textMuted);
+
+  const icon = (
+    <View style={[s.heartWrap, style]}>
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill={fillColor} stroke={strokeColor} strokeWidth={2}>
+        <Path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+      </Svg>
+    </View>
+  );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        {icon}
+      </TouchableOpacity>
+    );
+  }
+  return icon;
+};
+
+// ── Navigate to Start Button ─────────────────────────────────────────────────
+
+export const NavigateToStartButton = ({ onPress, disabled, style }) => (
+  <TouchableOpacity
+    style={[s.navStartBtn, disabled && s.navStartBtnDisabled, style]}
+    onPress={onPress}
+    disabled={disabled}
+    activeOpacity={0.85}
+  >
+    <Text style={s.navStartBtnText}>{'\uD83D\uDDFA\uFE0F'} Navigate to Start</Text>
+  </TouchableOpacity>
+);
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const P = 16; // page padding
@@ -388,4 +453,18 @@ const s = StyleSheet.create({
   segOption: { flex: 1, padding: 8, alignItems: 'center', zIndex: 1 },
   segText: { fontSize: 12, fontWeight: '400', color: colors.textMuted },
   segTextActive: { fontWeight: '600', color: colors.text },
+  // Error State
+  errorStateWrap: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingVertical: 40, gap: 8 },
+  errorIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.warnLight, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  errorIcon: { fontSize: 22 },
+  errorTitle: { fontSize: 15, fontWeight: '600', color: colors.warn, textAlign: 'center' },
+  errorBody: { fontSize: 13, fontWeight: '400', color: colors.textMuted, textAlign: 'center', lineHeight: 19, maxWidth: 280 },
+  errorRetryBtn: { marginTop: 12, backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 24, paddingVertical: 10 },
+  errorRetryText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  // Heart Icon
+  heartWrap: { alignItems: 'center', justifyContent: 'center' },
+  // Navigate to Start Button
+  navStartBtn: { marginHorizontal: P, marginBottom: 10, backgroundColor: colors.primary, borderRadius: 14, padding: 13, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  navStartBtnDisabled: { backgroundColor: colors.borderLight },
+  navStartBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
 });
