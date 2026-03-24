@@ -38,7 +38,13 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "Paddle",
+      "shortName": "Paddle",
+      "description": "Know the water before you go — AI-powered kayak trip planning",
+      "themeColor": "#3a6a4a",
+      "backgroundColor": "#f2f1ed",
+      "preferRelatedApplications": false
     },
     "plugins": [
       [
