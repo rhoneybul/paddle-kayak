@@ -16,6 +16,13 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "preview": {
+      "ios": {
+        "appleId": "honeybulr@icloud.com",
+        "ascAppId": "6761067381",
+        "appleTeamId": "22Y4P5434A"
+      }
+    }
   }
 }

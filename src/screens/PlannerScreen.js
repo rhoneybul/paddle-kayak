@@ -19,6 +19,12 @@ import { searchLocations, MIN_SEARCH_LENGTH, SEARCH_DEBOUNCE_MS } from '../servi
 import { getWeatherWithCache } from '../services/weatherService';
 import { saveRoute, getSavedRoutes, deleteSavedRoute } from '../services/storageService';
 import { extractStartCoords, navigateToStart } from '../services/navigationService';
+import {
+  validateMaritimeRoute,
+  normaliseWaypointCoords,
+  getRouteLaunchPoint,
+  buildNavigateToStartUrl,
+} from '../services/routeService';
 
 // Native date picker — not available on web
 let DateTimePicker = null;
@@ -322,6 +328,24 @@ if (startHour >= endHour) {
         interests: selectedStops.length > 0 ? selectedStops : undefined,
         location: locationCoords ? { lat: locationCoords.lat, lng: locationCoords.lng } : undefined,
       });
+
+      // Maritime-first: validate each route's waypoints for water-safe geometry
+      if (result.routes) {
+        result.routes = result.routes.map(r => {
+          const validation = validateMaritimeRoute(r.waypoints || [], {
+            maxSegmentKm: 10,
+            declaredDistKm: r.distanceKm,
+            skillKey: skillLevel?.key,
+          });
+          return {
+            ...r,
+            waypoints: r.waypoints, // preserve original format for PaddleMap
+            _maritimeValidation: validation,
+            _launchPoint: getRouteLaunchPoint(r),
+          };
+        });
+      }
+
       setPlan(result);
       setLoadingPct(100);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -894,26 +918,47 @@ if (startHour >= endHour) {
                         ))}
                       </View>
                     )}
+
+                    {/* Maritime validation warnings */}
+                    {r._maritimeValidation && !r._maritimeValidation.valid && (
+                      <View style={s.maritimeWarning}>
+                        <Text style={s.maritimeWarningTitle}>Route geometry notice</Text>
+                        {r._maritimeValidation.warnings.map((w, wi) => (
+                          <Text key={wi} style={s.maritimeWarningText}>{w}</Text>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 )}
-
-                {/* Ticket 1: Navigate to Start button */}
-                <NavigateToStartButton
-                  onPress={() => handleNavigateToStart(sel)}
-                  disabled={!selStartCoords}
-                  style={{ marginHorizontal: 10, marginTop: 6 }}
-                />
-
-                <TouchableOpacity
-                  style={s.saveRouteBtn}
-                  onPress={() => {
-                    setSaveModalRoute({ ...r, location: plan.location?.base || destination, locationCoords });
-                    setSaveNameInput(r.name || '');
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={s.saveRouteBtnText}>+ Save Route</Text>
-                </TouchableOpacity>
+                {/* Navigate to start + Save buttons */}
+                <View style={s.routeActions}>
+                  {r._launchPoint && (
+                    <TouchableOpacity
+                      style={s.navigateBtn}
+                      onPress={() => {
+                        const url = buildNavigateToStartUrl(r._launchPoint.lat, r._launchPoint.lon);
+                        if (Platform.OS === 'web') {
+                          window.open(url, '_blank');
+                        } else {
+                          import('react-native').then(({ Linking }) => Linking.openURL(url));
+                        }
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={s.navigateBtnText}>Navigate to Start</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[s.saveRouteBtn, r._launchPoint && s.saveRouteBtnFlex]}
+                    onPress={() => {
+                      setSaveModalRoute({ ...r, location: plan.location?.base || destination, locationCoords });
+                      setSaveNameInput(r.name || '');
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={s.saveRouteBtnText}>+ Save Route</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             );
           })()}
@@ -1236,8 +1281,18 @@ const s = StyleSheet.create({
   routeDescInline:  { fontSize: 11, fontWeight: '300', color: colors.textMid, marginTop: 2, lineHeight: 15 },
   onMapLabel:       { fontSize: 8.5, fontWeight: '500', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.4 },
 
-  saveRouteBtn:     { margin: 10, marginTop: 0, backgroundColor: colors.primary, borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
-  saveRouteBtnText: { fontSize: 14, fontWeight: '600', color: '#fff', letterSpacing: 0.2 },
+  // Route action buttons (navigate + save)
+  routeActions:       { flexDirection: 'row', gap: 8, margin: 10, marginTop: 0 },
+  navigateBtn:        { flex: 1, backgroundColor: colors.good, borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  navigateBtnText:    { fontSize: 13, fontWeight: '600', color: '#fff', letterSpacing: 0.2 },
+  saveRouteBtn:       { flex: 0, backgroundColor: colors.primary, borderRadius: 8, paddingVertical: 13, paddingHorizontal: 16, alignItems: 'center' },
+  saveRouteBtnFlex:   { flex: 1 },
+  saveRouteBtnText:   { fontSize: 14, fontWeight: '600', color: '#fff', letterSpacing: 0.2 },
+
+  // Maritime validation warnings
+  maritimeWarning:      { backgroundColor: colors.cautionLight, borderRadius: 6, padding: 8, marginTop: 8 },
+  maritimeWarningTitle: { fontSize: 10, fontWeight: '600', color: colors.caution, marginBottom: 3 },
+  maritimeWarningText:  { fontSize: 9.5, fontWeight: '300', color: colors.caution, lineHeight: 14 },
 
   // Duration picker
   durationRow:      { flexDirection: 'row', gap: 8, marginHorizontal: P, marginBottom: 8, flexWrap: 'wrap' },

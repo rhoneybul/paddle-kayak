@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Solvaa",
-    "slug": "solvaa",
+    "slug": "kayak-planner",
     "scheme": "solvaa",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -63,6 +63,7 @@
       "eas": {
         "projectId": "6899eeb2-0873-48c1-bcd6-ea2da41466fb"
       }
-    }
+    },
+    "owner": "rhoneybul"
   }
 }
