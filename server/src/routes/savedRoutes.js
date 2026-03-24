@@ -31,6 +31,11 @@ ${trkpts}
 // GET /api/saved-routes
 router.get('/', async (req, res, next) => {
   try {
+    await supabase.from('profiles').upsert(
+      { id: req.user.id, email: req.user.email, skill_level: 'beginner' },
+      { onConflict: 'id', ignoreDuplicates: true }
+    );
+
     const { data, error } = await supabase
       .from('saved_routes')
       .select('*')
@@ -77,6 +82,12 @@ router.post('/', async (req, res, next) => {
         // Storage unavailable — continue without GPX URL
       }
     }
+
+    // ── Ensure profile exists (required by foreign key) ───────────────────────
+    await supabase.from('profiles').upsert(
+      { id: req.user.id, email: req.user.email, skill_level: 'beginner' },
+      { onConflict: 'id', ignoreDuplicates: true }
+    );
 
     // ── Insert into saved_routes table ────────────────────────────────────────
     const { data, error } = await supabase
