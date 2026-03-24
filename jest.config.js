@@ -7,6 +7,8 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^react-native-svg$': '<rootDir>/src/__tests__/__mocks__/react-native-svg.js',
+    '^react-native-maps$': '<rootDir>/src/__tests__/__mocks__/react-native-maps.js',
+    '^expo-linking$': '<rootDir>/src/__tests__/__mocks__/expo-linking.js',
   },
   testEnvironment: 'node',
   testPathIgnorePatterns: [

@@ -1,15 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
 import MapSketch from '../components/MapSketch';
 import {
   SheetHandle, SectionHeader, AlertBanner, PrimaryButton, MetricStrip,
-  ConditionLayer,
+  ConditionLayer, ErrorState, HeartIcon, NavigateToStartButton,
 } from '../components/UI';
 import { generateRoutes } from '../services/routeService';
-import { saveActiveTrip } from '../services/storageService';
+import { saveActiveTrip, saveRoute, getSavedRoutes, deleteSavedRoute } from '../services/storageService';
 import { getWeatherWithCache as getWeather } from '../services/weatherService';
+import { extractStartCoords, navigateToStart } from '../services/navigationService';
 
 // SVG icons as simple text for condition layers
 const WindIcon  = () => <Text style={{ fontSize: 14 }}>{'\uD83D\uDCA8'}</Text>;
@@ -22,6 +23,9 @@ export default function RoutesScreen({ navigation, route }) {
   const [routeWeather, setRouteWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
+  const [loadError, setLoadError] = useState(null);    // Ticket 4
+  const [refreshing, setRefreshing] = useState(false);  // Ticket 5
+  const [savedRouteNames, setSavedRouteNames] = useState(new Set()); // Ticket 3
 
   // Generate routes on mount
   useEffect(() => {
@@ -56,6 +60,57 @@ export default function RoutesScreen({ navigation, route }) {
   }, [location, routeWeather]);
 
   useEffect(() => { fetchWeather(); }, [fetchWeather]);
+
+  // Ticket 3: Load saved route names
+  const loadSavedRouteNames = useCallback(async () => {
+    try {
+      const saved = await getSavedRoutes();
+      setSavedRouteNames(new Set(saved.map(r => r.name)));
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadSavedRouteNames(); }, [loadSavedRouteNames]);
+
+  const isRouteFavorited = (routeName) => savedRouteNames.has(routeName);
+
+  const handleToggleFavorite = async (routeData) => {
+    const name = routeData.name || '';
+    if (isRouteFavorited(name)) {
+      Alert.alert('Remove Favorite', `Remove "${name}" from saved routes?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: async () => {
+          try {
+            const saved = await getSavedRoutes();
+            const target = saved.find(r => r.name === name);
+            if (target) await deleteSavedRoute(target.id);
+            setSavedRouteNames(prev => { const next = new Set(prev); next.delete(name); return next; });
+          } catch { /* ignore */ }
+        }},
+      ]);
+    } else {
+      try {
+        await saveRoute(routeData, name);
+        setSavedRouteNames(prev => new Set(prev).add(name));
+      } catch { Alert.alert('Error', 'Could not save route.'); }
+    }
+  };
+
+  // Ticket 1: Navigate to start
+  const handleNavigateToStart = (r) => {
+    const coords = extractStartCoords(r);
+    if (!coords) { Alert.alert('No Coordinates', 'Start location is not available.'); return; }
+    navigateToStart(coords.lat, coords.lng);
+  };
+
+  // Ticket 5: Pull to refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      setRouteWeather(null);
+      await fetchWeather();
+      await loadSavedRouteNames();
+    } catch { /* ignore */ }
+    finally { setRefreshing(false); }
+  }, [fetchWeather, loadSavedRouteNames]);
 
   const sel = routes[selected] || {};
   const isMultiDay = (tripType?.days || 1) > 1;
@@ -125,7 +180,13 @@ export default function RoutesScreen({ navigation, route }) {
           }}
         />
 
-        <ScrollView style={s.sheet} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={s.sheet}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+          }
+        >
           <SheetHandle />
 
           {/* Safety score strip */}
@@ -200,6 +261,11 @@ export default function RoutesScreen({ navigation, route }) {
                   <Text style={[s.rankText, { color: i === 0 ? colors.good : i === 1 ? colors.blue : colors.caution }]}>{i + 1}</Text>
                 </View>
                 <Text style={s.routeName}>{r.name}</Text>
+                <HeartIcon
+                  filled={isRouteFavorited(r.name)}
+                  size={18}
+                  onPress={() => handleToggleFavorite(r)}
+                />
                 <View style={[s.diffBadge, { backgroundColor: r.difficulty.color + '20' }]}>
                   <Text style={[s.diffText, { color: r.difficulty.color }]}>{r.difficulty.label}</Text>
                 </View>
@@ -253,6 +319,11 @@ export default function RoutesScreen({ navigation, route }) {
                       </Text>
                     </View>
                   )}
+                  <NavigateToStartButton
+                    onPress={() => handleNavigateToStart(r)}
+                    disabled={!extractStartCoords(r)}
+                    style={{ marginTop: 8 }}
+                  />
                 </View>
               )}
             </TouchableOpacity>
