@@ -1,5 +1,6 @@
 /**
- * Tests for PlannerScreen validation functions — date and duration validation.
+ * Tests for PlannerScreen validation functions — date and duration validation,
+ * including optional date (Plan for Later) support.
  */
 
 jest.mock('react-native', () => ({
@@ -20,9 +21,11 @@ jest.mock('react-native', () => ({
   TextInput: 'TextInput',
   TouchableOpacity: 'TouchableOpacity',
   ScrollView: 'ScrollView',
+  RefreshControl: 'RefreshControl',
   Keyboard: { dismiss: jest.fn() },
   Alert: { alert: jest.fn() },
   PanResponder: { create: jest.fn(() => ({ panHandlers: {} })) },
+  Modal: 'Modal',
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -53,6 +56,18 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn(),
+}));
+
+jest.mock('expo-linking', () => ({
+  canOpenURL: jest.fn().mockResolvedValue(false),
+  openURL: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('react-native-maps', () => ({
+  __esModule: true,
+  default: 'MapView',
+  Polyline: 'Polyline',
+  Marker: 'Marker',
 }));
 
 const { isDateValid, isDurationValid } = require('../screens/PlannerScreen');
@@ -94,6 +109,12 @@ describe('PlannerScreen validation', () => {
         String(tomorrow.getDate()).padStart(2, '0');
       expect(isDateValid(dateStr)).toBe(true);
     });
+
+    test('returns false for invalid date strings', () => {
+      expect(isDateValid('not-a-date')).toBe(false);
+      expect(isDateValid('2025')).toBe(false);
+      expect(isDateValid('2025-13-01')).toBe(false);
+    });
   });
 
   describe('isDurationValid', () => {
@@ -121,6 +142,19 @@ describe('PlannerScreen validation', () => {
       expect(isDurationValid(null)).toBe(false);
       expect(isDurationValid(undefined)).toBe(false);
       expect(isDurationValid('3')).toBe(false);
+    });
+  });
+
+  describe('optional date (Plan for Later)', () => {
+    test('null date is not valid as a date string but is allowed as state', () => {
+      // isDateValid should return false for null, which is expected.
+      // The "Plan for Later" feature treats null date as valid state
+      // by skipping date validation in the planning pipeline.
+      expect(isDateValid(null)).toBe(false);
+    });
+
+    test('empty string date is not valid', () => {
+      expect(isDateValid('')).toBe(false);
     });
   });
 });

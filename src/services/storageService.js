@@ -17,6 +17,7 @@ const KEYS = {
   PADDLE_LOG:    'PADDLE_ACTIVE_LOG',
   PROFILE:       'PADDLE_PROFILE',
   SAVED_ROUTES:  'PADDLE_SAVED_ROUTES',
+  FAVORITES_QUEUE: 'PADDLE_FAVORITES_QUEUE',
 };
 
 // ── Active trip (in-progress paddle) ─────────────────────────────────────────
@@ -305,4 +306,42 @@ export async function deleteSavedRoute(id) {
   if (serverId) {
     try { await api.savedRoutes.delete(serverId); } catch (_) {}
   }
+}
+
+// ── Favorites queue (offline-safe toggling) ──────────────────────────────────
+
+export async function isRouteFavorited(routeIdentifier) {
+  const routes = await getSavedRoutes();
+  return routes.some(r =>
+    r.id === routeIdentifier ||
+    r.serverId === routeIdentifier ||
+    r.name === routeIdentifier
+  );
+}
+
+export async function queueFavoriteAction(action) {
+  const raw = await AsyncStorage.getItem(KEYS.FAVORITES_QUEUE);
+  const queue = raw ? JSON.parse(raw) : [];
+  queue.push({ ...action, queuedAt: Date.now() });
+  await AsyncStorage.setItem(KEYS.FAVORITES_QUEUE, JSON.stringify(queue));
+}
+
+export async function processFavoritesQueue() {
+  const raw = await AsyncStorage.getItem(KEYS.FAVORITES_QUEUE);
+  if (!raw) return;
+  const queue = JSON.parse(raw);
+  if (queue.length === 0) return;
+  const remaining = [];
+  for (const action of queue) {
+    try {
+      if (action.type === 'save') {
+        await api.savedRoutes.create(action.payload);
+      } else if (action.type === 'delete' && action.serverId) {
+        await api.savedRoutes.delete(action.serverId);
+      }
+    } catch (_) {
+      remaining.push(action);
+    }
+  }
+  await AsyncStorage.setItem(KEYS.FAVORITES_QUEUE, JSON.stringify(remaining));
 }
