@@ -5,23 +5,81 @@ import { colors } from '../theme';
 
 /**
  * MapSketch — CSS-drawn map used across Home, Routes, Tracking, Campsites.
+ *
+ * Supports maritime coordinate arrays: when `maritimeCoords` is provided
+ * (an array of {lat, lon} or [lat, lon] waypoints), the component projects
+ * them into the SVG viewBox and draws a route path automatically. This
+ * allows denser maritime-first coordinate arrays to render correctly
+ * without manually crafting SVG `d` strings.
+ *
  * Props:
- *   height        number   (required)
- *   routes        array    [{type:'solid'|'dashed'|'faint', d:string, color?}]
- *   waypoints     array    [{x, y, type:'start'|'end'|'mid'|'camp'|'paddler'|'vessel'}]
- *   myPos         {x, y}   current position marker (blue dot with pulse)
- *   heading       number   compass heading in degrees (0-360) for directional arrow
- *   overlayTitle  string
- *   overlayMeta   string
- *   windChip      string   top-left overlay
- *   etaChip       string   bottom-right overlay (number, label below)
- *   showLegend    object   {paddlers?, vessels?, campsites?, routes?}
- *   locationPin   {x, y, label?}  searched location pin marker (red pin with label)
- *   children      extra SVG elements
+ *   height          number   (required)
+ *   routes          array    [{type:'solid'|'dashed'|'faint', d:string, color?}]
+ *   maritimeCoords  array    [{lat,lon}] or [[lat,lon]] — projected into SVG automatically
+ *   waypoints       array    [{x, y, type:'start'|'end'|'mid'|'camp'|'paddler'|'vessel'}]
+ *   myPos           {x, y}   current position marker (blue dot with pulse)
+ *   heading         number   compass heading in degrees (0-360) for directional arrow
+ *   overlayTitle    string
+ *   overlayMeta     string
+ *   windChip        string   top-left overlay
+ *   etaChip         string   bottom-right overlay (number, label below)
+ *   showLegend      object   {paddlers?, vessels?, campsites?, routes?}
+ *   locationPin     {x, y, label?}  searched location pin marker (red pin with label)
+ *   children        extra SVG elements
  */
+
+/**
+ * Project an array of geographic coordinates into SVG viewBox pixel space.
+ * Handles both [{lat, lon}] objects and [[lat, lon]] arrays (Claude format).
+ * Uses a simple Mercator-like projection bounded by the provided SVG dimensions,
+ * with 10% padding so the route doesn't touch the edges.
+ *
+ * @param {Array} coords - [{lat,lon}] or [[lat,lon]]
+ * @param {number} svgW - SVG viewBox width
+ * @param {number} svgH - SVG viewBox height
+ * @returns {Array<{x: number, y: number}>}
+ */
+export function projectCoordsToSvg(coords, svgW, svgH) {
+  if (!Array.isArray(coords) || coords.length === 0) return [];
+
+  const pts = coords.map(c => {
+    if (Array.isArray(c)) return { lat: parseFloat(c[0]), lon: parseFloat(c[1]) };
+    return { lat: parseFloat(c.lat), lon: parseFloat(c.lon) };
+  }).filter(p => !isNaN(p.lat) && !isNaN(p.lon));
+
+  if (pts.length === 0) return [];
+
+  const lats = pts.map(p => p.lat);
+  const lons = pts.map(p => p.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+
+  const latRange = maxLat - minLat || 0.001;
+  const lonRange = maxLon - minLon || 0.001;
+
+  const pad = 0.1; // 10% padding
+  const drawW = svgW * (1 - 2 * pad);
+  const drawH = svgH * (1 - 2 * pad);
+
+  return pts.map(p => ({
+    x: svgW * pad + ((p.lon - minLon) / lonRange) * drawW,
+    y: svgH * pad + ((maxLat - p.lat) / latRange) * drawH, // invert Y for SVG
+  }));
+}
+
+/**
+ * Build an SVG path `d` string from an array of {x, y} points.
+ * @param {Array<{x: number, y: number}>} points
+ * @returns {string}
+ */
+export function buildSvgPathFromPoints(points) {
+  if (points.length === 0) return '';
+  return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+}
 export default function MapSketch({
   height = 240,
   routes = [],
+  maritimeCoords,
   waypoints = [],
   myPos,
   heading,
@@ -34,6 +92,10 @@ export default function MapSketch({
   children,
 }) {
   const W = 276; // internal SVG width matches phone inner width
+
+  // Project maritime coordinates into SVG space if provided
+  const projectedPoints = maritimeCoords ? projectCoordsToSvg(maritimeCoords, W, height) : [];
+  const maritimePath = buildSvgPathFromPoints(projectedPoints);
 
   return (
     <View style={[styles.container, { height }]}>
@@ -68,6 +130,26 @@ export default function MapSketch({
             opacity={r.type === 'solid' ? 0.88 : r.type === 'dashed' ? 0.55 : 0.28}
           />
         ))}
+
+        {/* Maritime route — auto-projected from lat/lon coordinates */}
+        {maritimePath ? (
+          <Path
+            d={maritimePath}
+            stroke={colors.mapRoute}
+            strokeWidth={2.5}
+            fill="none"
+            strokeLinecap="round"
+            opacity={0.88}
+          />
+        ) : null}
+
+        {/* Maritime waypoint markers — start and end */}
+        {projectedPoints.length > 0 && (
+          <>
+            <Circle cx={projectedPoints[0].x} cy={projectedPoints[0].y} r={5.5} fill={colors.good} stroke="white" strokeWidth={2} />
+            <Circle cx={projectedPoints[projectedPoints.length - 1].x} cy={projectedPoints[projectedPoints.length - 1].y} r={5.5} fill={colors.warn} stroke="white" strokeWidth={2} opacity={0.85} />
+          </>
+        )}
 
         {children}
 
