@@ -112,12 +112,20 @@ Respond ONLY with a valid JSON object (no markdown, no backticks, no preamble) i
   "safetyNote": "Safety note relevant to current conditions"
 }
 
-CRITICAL — WAYPOINTS:
-- "waypoints" MUST be a JSON array of [latitude, longitude] number pairs tracing the ACTUAL paddle route on REAL water near the REQUESTED destination.
-- NEVER use or anchor to example coordinates. Use your geographic knowledge to place each point accurately on navigable water (river channel, estuary, coastline, harbour, lake).
-- The first point must be at the named launch point; the last at the take-out. Intermediate points must follow the water — never cross dry land.
-- Include 8–12 evenly spaced points. ALL points must sit on water.
+CRITICAL — MARITIME-FIRST WAYPOINTS:
+- "waypoints" MUST be a JSON array of [latitude, longitude] number pairs tracing the ACTUAL paddle route on REAL navigable water near the REQUESTED destination.
+- NEVER use or anchor to example coordinates. Use your geographic knowledge to place each point accurately on navigable water (river channel, estuary, coastline, harbour, lake, bay).
+- The first point must be at a REAL launch point (boat ramp, marina, beach, slipway). The last point must be at a REAL take-out.
+- Intermediate points must follow the water — NEVER cross dry land, roads, or non-navigable terrain.
+- MARITIME ROUTING RULES:
+  * Routes must "hug" the coastline or follow the river/lake shore rather than cutting across open water or land.
+  * For coastal routes, keep waypoints within 500m–3km of the shoreline (depending on skill level).
+  * NEVER route through deep-sea shipping lanes unless the route is an advanced open-water crossing.
+  * Avoid restricted maritime zones, port exclusion areas, and military waters.
+  * If crossing between land masses (e.g. island hopping), choose the shortest safe water crossing and mark the crossing segment clearly.
+- Include 8–15 evenly spaced points. ALL points MUST sit on water. More points are better for complex coastlines.
 - The "Starting location coordinates" in the user message are your anchor — waypoints must be geographically near those coordinates, on the correct body of water.
+- For each route, set "launchPoint" to the specific name of the put-in location (e.g. "Seaton Beach Slipway", "Chichester Marina") so users can navigate to it by car.
 
 OTHER RULES:
 - The "routes" array MUST have exactly 3 objects.
