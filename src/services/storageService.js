@@ -10,12 +10,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from './api';
 
 const KEYS = {
-  ACTIVE_TRIP:  'PADDLE_ACTIVE_TRIP',
-  HISTORY:      'PADDLE_HISTORY',
-  WEATHER:      'PADDLE_WEATHER_CACHE',
-  SETTINGS:     'PADDLE_SETTINGS',
-  PADDLE_LOG:   'PADDLE_ACTIVE_LOG',
-  PROFILE:      'PADDLE_PROFILE',
+  ACTIVE_TRIP:   'PADDLE_ACTIVE_TRIP',
+  HISTORY:       'PADDLE_HISTORY',
+  WEATHER:       'PADDLE_WEATHER_CACHE',
+  SETTINGS:      'PADDLE_SETTINGS',
+  PADDLE_LOG:    'PADDLE_ACTIVE_LOG',
+  PROFILE:       'PADDLE_PROFILE',
+  SAVED_ROUTES:  'PADDLE_SAVED_ROUTES',
 };
 
 // ── Active trip (in-progress paddle) ─────────────────────────────────────────
@@ -193,4 +194,115 @@ export async function getCachedWeather(lat, lon) {
 
 export async function saveWeatherCache(lat, lon, data) {
   await AsyncStorage.setItem(KEYS.WEATHER, JSON.stringify({ lat, lon, data, ts: Date.now() }));
+}
+
+// ── Saved routes (date-independent bookmarks) ─────────────────────────────────
+
+/** Normalise a server row (snake_case) into the local format used by screens. */
+function normaliseServerRoute(row) {
+  return {
+    id:               row.id,
+    serverId:         row.id,
+    savedAt:          new Date(row.created_at).getTime(),
+    name:             row.name,
+    location:         row.location || '',
+    locationCoords:   (row.location_lat != null && row.location_lon != null)
+                        ? { lat: row.location_lat, lng: row.location_lon }
+                        : null,
+    distanceKm:       row.distance_km || 0,
+    terrain:          row.terrain || '',
+    difficulty:       row.difficulty || 'intermediate',
+    estimated_duration: row.estimated_duration || 2,
+    waypoints:        row.waypoints || [],
+    launchPoint:      row.launch_point || '',
+    travelFromBase:   row.travel_from_base || '',
+    travelTimeMin:    row.travel_time_min || 0,
+    highlights:       row.highlights || [],
+    description:      row.description || '',
+    gpxUrl:           row.gpx_url || null,
+  };
+}
+
+export async function getSavedRoutes() {
+  // Try server first; fall back to local cache
+  try {
+    const rows = await api.savedRoutes.list();
+    const normalised = rows.map(normaliseServerRoute);
+    await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(normalised));
+    return normalised;
+  } catch (_) {
+    const raw = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+    return raw ? JSON.parse(raw) : [];
+  }
+}
+
+export async function saveRoute(route, customName) {
+  const name = customName || route.name || 'Unnamed route';
+  const entry = {
+    id:               Date.now().toString(),
+    savedAt:          Date.now(),
+    name,
+    location:         route.location || '',
+    locationCoords:   route.locationCoords || null,
+    distanceKm:       route.distanceKm || 0,
+    terrain:          route.terrain || '',
+    difficulty:       route.difficulty_rating || route.difficulty || 'intermediate',
+    estimated_duration: route.estimated_duration || route.durationHours || 2,
+    waypoints:        route.waypoints || [],
+    launchPoint:      route.launchPoint || '',
+    travelFromBase:   route.travelFromBase || '',
+    travelTimeMin:    route.travelTimeMin || 0,
+    highlights:       route.highlights || [],
+    description:      route.description || '',
+  };
+
+  // Optimistically write to local cache
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  routes.unshift(entry);
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes.slice(0, 50)));
+
+  // Sync to server in background
+  try {
+    const serverRow = await api.savedRoutes.create({
+      name,
+      location_name:     entry.location,
+      location_lat:      entry.locationCoords?.lat,
+      location_lon:      entry.locationCoords?.lng,
+      distance_km:       entry.distanceKm,
+      terrain:           entry.terrain,
+      difficulty:        entry.difficulty,
+      estimated_duration: entry.estimated_duration,
+      waypoints:         entry.waypoints,
+      highlights:        entry.highlights,
+      launch_point:      entry.launchPoint,
+      travel_from_base:  entry.travelFromBase,
+      travel_time_min:   entry.travelTimeMin,
+      description:       entry.description,
+      route_data:        route,
+    });
+    // Update local entry with server-assigned id and gpx_url
+    const updated = [...routes];
+    const idx = updated.findIndex(r => r.id === entry.id);
+    if (idx >= 0) {
+      updated[idx] = { ...updated[idx], serverId: serverRow.id, gpxUrl: serverRow.gpx_url };
+      await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(updated));
+    }
+    return { ...entry, serverId: serverRow.id, gpxUrl: serverRow.gpx_url };
+  } catch (_) {
+    // Offline — entry saved locally, will sync on next load
+    return entry;
+  }
+}
+
+export async function deleteSavedRoute(id) {
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  const target = routes.find(r => r.id === id || r.serverId === id);
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes.filter(r => r.id !== id)));
+  // Background delete from server
+  const serverId = target?.serverId;
+  if (serverId) {
+    try { await api.savedRoutes.delete(serverId); } catch (_) {}
+  }
 }

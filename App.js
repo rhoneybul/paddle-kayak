@@ -16,6 +16,8 @@ import CampsitesScreen    from './src/screens/CampsitesScreen';
 import ActivePaddleScreen from './src/screens/ActivePaddleScreen';
 import EmergencyScreen    from './src/screens/EmergencyScreen';
 import HistoryScreen      from './src/screens/HistoryScreen';
+import SavedRoutesScreen  from './src/screens/SavedRoutesScreen';
+import YourPaddlesScreen  from './src/screens/YourPaddlesScreen';
 import WebWrapper         from './src/components/WebWrapper';
 
 const Stack = createStackNavigator();
@@ -69,6 +71,8 @@ export default function App() {
             <Stack.Screen name="ActivePaddle"  component={ActivePaddleScreen} />
             <Stack.Screen name="Emergency"     component={EmergencyScreen} />
             <Stack.Screen name="History"       component={HistoryScreen} />
+            <Stack.Screen name="SavedRoutes"   component={SavedRoutesScreen} />
+            <Stack.Screen name="YourPaddles"   component={YourPaddlesScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </WebWrapper>

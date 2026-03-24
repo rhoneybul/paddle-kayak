@@ -66,6 +66,13 @@ export const api = {
     create: (paddle)  => request('POST', '/api/paddles', paddle),
   },
 
+  // ── Saved routes ──────────────────────────────────────────────────────────
+  savedRoutes: {
+    list:   ()        => request('GET',    '/api/saved-routes'),
+    create: (route)   => request('POST',   '/api/saved-routes', route),
+    delete: (id)      => request('DELETE', `/api/saved-routes/${id}`),
+  },
+
   // ── Campsites (no auth needed) ────────────────────────────────────────────
   campsites: {
     search: (lat, lon, radius = 30) =>

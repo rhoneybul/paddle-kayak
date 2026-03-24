@@ -1,8 +1,45 @@
 const express = require('express');
 const router = express.Router();
+const { supabase } = require('../lib/supabase');
 
 // Claude API service — moved from frontend to avoid CORS
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || '';
+
+// ── GPX helpers ───────────────────────────────────────────────────────────────
+
+function generateGpx(name, waypoints) {
+  const safeName = (name || 'Route')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const trkpts = (waypoints || [])
+    .filter(p => Array.isArray(p) && p.length >= 2)
+    .map(([lat, lon]) => `      <trkpt lat="${lat}" lon="${lon}"></trkpt>`)
+    .join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Paddle App" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>${safeName}</name><trkseg>\n${trkpts}\n  </trkseg></trk>
+</gpx>`;
+}
+
+async function uploadRouteGpx(name, waypoints, idx) {
+  try {
+    const slug     = (name || `route-${idx}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+    const fileName = `routes/${Date.now()}-${idx}-${slug}.gpx`;
+    const gpxContent = generateGpx(name, waypoints);
+
+    const { data, error } = await supabase.storage
+      .from('gpx-routes')
+      .upload(fileName, Buffer.from(gpxContent, 'utf-8'), {
+        contentType: 'application/gpx+xml',
+        upsert: false,
+      });
+
+    if (error || !data) return null;
+    const { data: urlData } = supabase.storage.from('gpx-routes').getPublicUrl(fileName);
+    return urlData?.publicUrl || null;
+  } catch {
+    return null;
+  }
+}
 
 /** Default request timeout in ms (30 seconds). */
 const REQUEST_TIMEOUT_MS = 30000;
@@ -77,20 +114,25 @@ Use the skill level context provided in the user prompt to ensure routes are app
 Always prioritize safety and realistic planning.`;
 
 async function callClaudeAPI(messages, systemPrompt) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 110_000); // 110s — under client's 120s
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
+    signal: controller.signal,
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': CLAUDE_API_KEY,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       system: systemPrompt,
       messages: messages,
     }),
   });
+  clearTimeout(timer);
 
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
@@ -131,7 +173,18 @@ router.post('/', async (req, res) => {
         [{ role: 'user', content: userMessage }],
         systemPrompt,
       );
-      return res.json(JSON.parse(responseText.replace(/```json|```/g, '').trim()));
+      const plan = JSON.parse(responseText.replace(/```json|```/g, '').trim());
+
+      // Upload a GPX file to Supabase storage for each route (best-effort, in parallel)
+      if (Array.isArray(plan.routes)) {
+        await Promise.all(plan.routes.map(async (route, i) => {
+          if (Array.isArray(route.waypoints) && route.waypoints.length > 0) {
+            route.gpx_url = await uploadRouteGpx(route.name, route.waypoints, i);
+          }
+        }));
+      }
+
+      return res.json(plan);
     }
 
     let enrichedPrompt = prompt;

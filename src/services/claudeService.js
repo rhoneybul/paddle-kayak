@@ -14,7 +14,7 @@
  *   description:           string   — 1-2 sentence overview
  *   difficulty_rating:     string   — one of: beginner | intermediate | advanced | expert
  *   estimated_duration:    number   — hours
- *   waypoints:             string   — GPX XML string (<gpx>…</gpx>)
+ *   waypoints:             [lat,lon][] — array of [lat, lon] coordinate pairs
  *   weather_impact_summary:string   — how current forecast affects this route
  *   distanceKm:            number
  *   terrain:               string   — coastal | river | lake | estuary
@@ -31,8 +31,11 @@ import { SKILL_LEVELS } from './stravaService';
 import { getWeatherWithCache } from './weatherService';
 
 
-/** Default request timeout in ms (30 seconds). */
-const REQUEST_TIMEOUT_MS = 30000;
+/** Default request timeout in ms (120 seconds — Claude with GPX routes can be slow). */
+const REQUEST_TIMEOUT_MS = 120000;
+
+/** Backend API base URL — override via EXPO_PUBLIC_API_URL env var. */
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
 
 // ── Skill-level description block used inside the system prompt ──────────────
@@ -46,10 +49,7 @@ const SKILL_LEVEL_CONTEXT = Object.values(SKILL_LEVELS)
 // ── System prompt for three-route weather-aware planning ─────────────────────
 const SYSTEM_PROMPT_THREE_ROUTES = `You are a kayaking trip planner assistant built into the Paddle app.
 
-When a user describes a paddle they want to do you MUST respond with a JSON object containing EXACTLY three distinct route options. Each route should represent a different style:
-1. **Scenic** — prioritises beautiful scenery, wildlife, peaceful water
-2. **Fast / Direct** — most efficient route, shorter distance, minimal detours
-3. **Coastal / Adventure** — more exposed water, island hops, or challenging coastline
+When a user describes a paddle they want to do you MUST respond with a JSON object containing EXACTLY three distinct route options. Rank them from best to third-best match for the user's request. Make each route genuinely different — different launch point, different character, different stretch of water.
 
 SKILL LEVELS (align difficulty_rating to these):
 ${SKILL_LEVEL_CONTEXT}
@@ -86,7 +86,7 @@ Respond ONLY with a valid JSON object (no markdown, no backticks, no preamble) i
       "description": "1-2 sentence overview of the route",
       "difficulty_rating": "beginner | intermediate | advanced | expert",
       "estimated_duration": number,
-      "waypoints": "<gpx xmlns=\\"http://www.topografix.com/GPX/1/1\\"><trk><name>Route name</name><trkseg><trkpt lat=\\"...\\\" lon=\\"...\\\" /><trkpt ... /></trkseg></trk></gpx>",
+      "waypoints": "REPLACE_WITH_REAL_COORDS — see IMPORTANT section below",
       "weather_impact_summary": "How current weather affects this route specifically",
       "distanceKm": number,
       "terrain": "coastal | river | lake | estuary",
@@ -112,9 +112,15 @@ Respond ONLY with a valid JSON object (no markdown, no backticks, no preamble) i
   "safetyNote": "Safety note relevant to current conditions"
 }
 
-IMPORTANT:
+CRITICAL — WAYPOINTS:
+- "waypoints" MUST be a JSON array of [latitude, longitude] number pairs tracing the ACTUAL paddle route on REAL water near the REQUESTED destination.
+- NEVER use or anchor to example coordinates. Use your geographic knowledge to place each point accurately on navigable water (river channel, estuary, coastline, harbour, lake).
+- The first point must be at the named launch point; the last at the take-out. Intermediate points must follow the water — never cross dry land.
+- Include 8–12 evenly spaced points. ALL points must sit on water.
+- The "Starting location coordinates" in the user message are your anchor — waypoints must be geographically near those coordinates, on the correct body of water.
+
+OTHER RULES:
 - The "routes" array MUST have exactly 3 objects.
-- "waypoints" must be a valid GPX XML string with realistic lat/lon coordinates that trace the actual route path. Include at least 5 trackpoints per route for good map fidelity.
 - "difficulty_rating" must be one of: beginner, intermediate, advanced, expert.
 - Use real place names. UK locations should reference real UK paddling spots.
 - If they mention Axminster, suggest River Axe estuary, Lyme Bay, Seaton.
@@ -333,7 +339,7 @@ export async function planPaddleWithWeather({
     description: r.description || '',
     difficulty_rating: r.difficulty_rating || 'intermediate',
     estimated_duration: r.estimated_duration || r.durationHours || 2,
-    waypoints: r.waypoints || '',
+    waypoints: r.waypoints || [],
     weather_impact_summary: r.weather_impact_summary || 'No weather data available',
     distanceKm: r.distanceKm || 0,
     terrain: r.terrain || 'coastal',
@@ -344,6 +350,7 @@ export async function planPaddleWithWeather({
     highlights: r.highlights || [],
     launchPoint: r.launchPoint || '',
     bestConditions: r.bestConditions || '',
+    gpxUrl: r.gpx_url || null,
     // Keep original estimated_duration also as durationHours for backward compat
     durationHours: r.estimated_duration || r.durationHours || 2,
   }));
@@ -355,7 +362,7 @@ export async function planPaddleWithWeather({
       description: 'Suggested alternative',
       difficulty_rating: 'intermediate',
       estimated_duration: 2,
-      waypoints: '',
+      waypoints: [],
       weather_impact_summary: 'No weather data available',
       distanceKm: 0,
       terrain: 'coastal',

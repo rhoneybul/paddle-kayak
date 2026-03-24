@@ -2,12 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 
-const tripsRouter    = require('./routes/trips');
-const paddlesRouter  = require('./routes/paddles');
-const campsitesRouter = require('./routes/campsites');
-const weatherRouter  = require('./routes/weather');
-const usersRouter    = require('./routes/users');
-const planningRouter = require('./routes/planning');
+const tripsRouter       = require('./routes/trips');
+const paddlesRouter     = require('./routes/paddles');
+const campsitesRouter   = require('./routes/campsites');
+const weatherRouter     = require('./routes/weather');
+const usersRouter       = require('./routes/users');
+const planningRouter    = require('./routes/planning');
+const savedRoutesRouter = require('./routes/savedRoutes');
 
 const { authMiddleware } = require('./middleware/auth');
 
@@ -25,9 +26,10 @@ app.get('/health', (_req, res) => {
 });
 
 // ── Protected routes ──────────────────────────────────────────────────────────
-app.use('/api/users',     authMiddleware, usersRouter);
-app.use('/api/trips',     authMiddleware, tripsRouter);
-app.use('/api/paddles',   authMiddleware, paddlesRouter);
+app.use('/api/users',         authMiddleware, usersRouter);
+app.use('/api/trips',         authMiddleware, tripsRouter);
+app.use('/api/paddles',       authMiddleware, paddlesRouter);
+app.use('/api/saved-routes',  authMiddleware, savedRoutesRouter);
 app.use('/api/campsites', campsitesRouter);  // public — no auth needed
 app.use('/api/weather',   weatherRouter);    // public — proxies Open-Meteo
 app.use('/api/planning',  planningRouter);   // public — plans paddles via Claude

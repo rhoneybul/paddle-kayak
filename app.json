@@ -43,7 +43,8 @@
           "locationAlwaysAndWhenInUsePermission": "Paddle uses your location to track your route and provide real-time safety alerts."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "stravaClientId": "",

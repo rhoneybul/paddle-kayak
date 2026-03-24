@@ -40,7 +40,7 @@ function buildAuthURL() {
     client_id:        CLIENT_ID,
     response_type:    'code',
     redirect_uri:     REDIRECT_URI,
-    approval_prompt:  'auto',
+    approval_prompt:  'force', // always show account picker — required for switching accounts
     scope:            SCOPE,
   });
   return `https://www.strava.com/oauth/authorize?${params}`;
