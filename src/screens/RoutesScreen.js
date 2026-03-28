@@ -173,14 +173,7 @@ export default function RoutesScreen({ navigation, route }) {
             ...(isMultiDay ? [{ x: 132, y: 96, type: 'camp' }, { x: 152, y: 108, type: 'camp', faded: true }] : []),
           ]}
           windChip={windSpeed !== '-' ? { main: `${windSpeed} kts ${windDir}`, sub: `${temp}\u00b0C` } : null}
-          showLegend={{
-            routes: routes.slice(0, 3).map((r, i) => ({
-              label: r.name,
-              color: i === 0 ? colors.mapRoute : i === 1 ? colors.mapRouteAlt : colors.textMuted,
-              faint: i > 0,
-            })),
-            ...(isMultiDay ? { campsites: 'Campsites' } : {}),
-          }}
+          showLegend={isMultiDay ? { campsites: 'Campsites' } : undefined}
         />
 
         <ScrollView

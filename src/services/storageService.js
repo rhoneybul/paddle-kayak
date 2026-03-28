@@ -230,8 +230,25 @@ export async function getSavedRoutes() {
   try {
     const rows = await api.savedRoutes.list();
     const normalised = rows.map(normaliseServerRoute);
-    await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(normalised));
-    return normalised;
+
+    // Preserve locally-stored fields (e.g. localKnowledge) that the server doesn't return
+    const cachedRaw = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+    const cached = cachedRaw ? JSON.parse(cachedRaw) : [];
+    const cachedById = {};
+    for (const r of cached) { if (r.id) cachedById[r.id] = r; }
+
+    const merged = normalised.map(r => {
+      const local = cachedById[r.id] || cachedById[r.serverId];
+      if (!local) return r;
+      return {
+        ...r,
+        ...(local.localKnowledge ? { localKnowledge: local.localKnowledge } : {}),
+        ...(local.lkMessages?.length ? { lkMessages: local.lkMessages } : {}),
+      };
+    });
+
+    await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(merged));
+    return merged;
   } catch (_) {
     const raw = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
     return raw ? JSON.parse(raw) : [];
@@ -304,6 +321,26 @@ export async function updateRouteWaypoints(id, { waypoints, distanceKm, estimate
   const idx = routes.findIndex(r => r.id === id);
   if (idx < 0) return;
   routes[idx] = { ...routes[idx], waypoints, distanceKm, estimated_duration };
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
+}
+
+/** Persist generated local knowledge onto an existing saved route. */
+export async function updateRouteLocalKnowledge(id, localKnowledge) {
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  const idx = routes.findIndex(r => r.id === id);
+  if (idx < 0) return;
+  routes[idx] = { ...routes[idx], localKnowledge };
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
+}
+
+/** Persist the Q&A message history for local knowledge on an existing saved route. */
+export async function updateRouteLkMessages(id, lkMessages) {
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  const idx = routes.findIndex(r => r.id === id);
+  if (idx < 0) return;
+  routes[idx] = { ...routes[idx], lkMessages };
   await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
 }
 

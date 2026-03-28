@@ -2,29 +2,33 @@
  * ConditionsTimeline — fixed row labels on the left, horizontally scrollable
  * time columns on the right.  Each column shows one hour.
  *
- * Rows: Wind (kt + direction arrow + head/tail/cross) · Temp · Rain · Swell · Tide
+ * Rows: Wind (kt + direction arrow + head/tail/cross) · Temp · Rain · Swell · Tide (line chart)
  *
  * Props:
- *   hourly       array       from weatherData.hourly
- *   date         string      YYYY-MM-DD — filter to this day
- *   startHour    number      only show hours >= startHour (optional)
- *   endHour      number      only show hours <= endHour (optional)
- *   routeBearing number|null from gpxRouteBearing()
+ *   hourly         array       from weatherData.hourly
+ *   date           string      YYYY-MM-DD — filter to this day
+ *   startHour      number      only show hours >= startHour (optional)
+ *   endHour        number      only show hours <= endHour (optional)
+ *   routeBearing   number|null from gpxRouteBearing()
+ *   tideHeightMap  object      { "YYYY-MM-DDTHH:00": metres }
+ *   tideExtremeMap object      { "YYYY-MM-DDTHH:00": { height, type } }
  */
 import { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import Svg, { Path, Circle, Text as SvgText, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { colors } from '../theme';
 
 const COL_W    = 54;
-const BAR_MAX  = 40;   // px height of tallest bar
-const LABEL_W  = 52;   // width of the fixed left-label column
+const BAR_MAX  = 40;
+const LABEL_W  = 52;
+const TIDE_H   = 64;   // height of the tide line chart row
+
 const ROW_HEIGHTS = {
-  wind:  96,   // arrow + bar + kt + cardinal + head/tail badge
-  temp:  56,   // bar + °C
-  rain:  52,   // bar + %
-  swell: 72,   // arrow + bar + m + period
-  tide:  28,   // placeholder text
-  time:  20,   // hour label at bottom
+  wind:  96,
+  temp:  56,
+  rain:  52,
+  swell: 72,
+  time:  20,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -59,7 +63,7 @@ function formatHour(timeStr) {
   return h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
 }
 
-// ── Row label component ───────────────────────────────────────────────────────
+// ── Row label ─────────────────────────────────────────────────────────────────
 
 function RowLabel({ label, height, sub }) {
   return (
@@ -70,7 +74,7 @@ function RowLabel({ label, height, sub }) {
   );
 }
 
-// ── Single time column ────────────────────────────────────────────────────────
+// ── Single time column ─────────────────────────────────────────────────────────
 
 function TimeColumn({ h, routeBearing, minTemp, maxTemp, hasMarine, colWidth = COL_W }) {
   const barW = Math.max(18, Math.floor(colWidth * 0.5));
@@ -145,9 +149,6 @@ function TimeColumn({ h, routeBearing, minTemp, maxTemp, hasMarine, colWidth = C
         </View>
       )}
 
-      {/* Tide row */}
-      <View style={[s.cell, { height: ROW_HEIGHTS.tide }]} />
-
       {/* Time label */}
       <View style={[s.cell, { height: ROW_HEIGHTS.time }]}>
         <Text style={s.timeLabel}>{formatHour(h.time)}</Text>
@@ -157,9 +158,94 @@ function TimeColumn({ h, routeBearing, minTemp, maxTemp, hasMarine, colWidth = C
   );
 }
 
+// ── Tide line chart ───────────────────────────────────────────────────────────
+
+function TideLineChart({ display, tideHeightMap, tideExtremeMap, colWidth }) {
+  const PAD_V = 14; // vertical padding for labels
+  const chartH = TIDE_H;
+  const totalW = display.length * colWidth;
+
+  const heights = display.map(h => {
+    const key = h.time?.slice(0, 13) + ':00';
+    return tideHeightMap[key] ?? null;
+  });
+
+  const valid = heights.filter(h => h !== null);
+  if (valid.length < 2) return null;
+
+  const minH  = Math.min(...valid);
+  const maxH  = Math.max(...valid);
+  const range = Math.max(maxH - minH, 0.01);
+
+  const toY = h => PAD_V + ((maxH - h) / range) * (chartH - PAD_V * 2);
+  const toX = i => (i + 0.5) * colWidth;
+
+  // Build smooth cubic bezier path
+  const pts = heights
+    .map((h, i) => h !== null ? { x: toX(i), y: toY(h) } : null)
+    .filter(Boolean);
+
+  let linePath = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const curr = pts[i];
+    const cpX  = (prev.x + curr.x) / 2;
+    linePath += ` C ${cpX.toFixed(1)} ${prev.y.toFixed(1)}, ${cpX.toFixed(1)} ${curr.y.toFixed(1)}, ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`;
+  }
+
+  const areaPath =
+    linePath +
+    ` L ${pts[pts.length - 1].x.toFixed(1)} ${chartH}` +
+    ` L ${pts[0].x.toFixed(1)} ${chartH} Z`;
+
+  return (
+    <View style={{ width: totalW, height: chartH, borderTopWidth: 0.5, borderTopColor: colors.borderLight }}>
+      <Svg width={totalW} height={chartH}>
+        <Defs>
+          <LinearGradient id="tideGrad" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={colors.primary} stopOpacity="0.18" />
+            <Stop offset="1" stopColor={colors.primary} stopOpacity="0.02" />
+          </LinearGradient>
+        </Defs>
+
+        {/* Filled area */}
+        <Path d={areaPath} fill="url(#tideGrad)" />
+
+        {/* Line */}
+        <Path d={linePath} stroke={colors.primary} strokeWidth={1.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Extreme markers */}
+        {display.map((h, i) => {
+          const key     = h.time?.slice(0, 13) + ':00';
+          const extreme = tideExtremeMap[key];
+          const ht      = heights[i];
+          if (!extreme || ht == null) return null;
+          const x   = toX(i);
+          const y   = toY(ht);
+          const isH = extreme.type === 'High';
+          const col = isH ? colors.primary : colors.textMuted;
+          return (
+            <Svg key={i} overflow="visible">
+              <Circle cx={x} cy={y} r={3} fill={col} stroke="#fff" strokeWidth={1} />
+              <SvgText
+                x={x} y={isH ? y - 5 : y + 12}
+                textAnchor="middle"
+                fontSize={7} fontWeight="600"
+                fill={col}
+              >
+                {ht.toFixed(1)}m
+              </SvgText>
+            </Svg>
+          );
+        })}
+      </Svg>
+    </View>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ConditionsTimeline({ hourly = [], date, startHour, endHour, routeBearing }) {
+export default function ConditionsTimeline({ hourly = [], date, startHour, endHour, routeBearing, tideHeightMap = {}, tideExtremeMap = {} }) {
   const [scrollW, setScrollW] = useState(0);
   const slots = hourly.filter(h => {
     if (!h.time) return false;
@@ -174,9 +260,14 @@ export default function ConditionsTimeline({ hourly = [], date, startHour, endHo
   if (display.length === 0) return null;
 
   const hasMarine = display.some(h => h.waveHeight != null || h.swellHeight != null);
-  const temps = display.map(h => h.temp ?? 0);
+  const temps  = display.map(h => h.temp ?? 0);
   const minTemp = Math.min(...temps);
   const maxTemp = Math.max(...temps, minTemp + 1);
+  const hasTides = Object.keys(tideHeightMap).length > 0;
+
+  const colWidth = scrollW > 0
+    ? Math.max(COL_W, Math.floor((scrollW - (display.length - 1) * 2) / display.length))
+    : COL_W;
 
   return (
     <View style={s.wrap}>
@@ -197,23 +288,21 @@ export default function ConditionsTimeline({ hourly = [], date, startHour, endHo
           <RowLabel label="Temp"  height={ROW_HEIGHTS.temp}  sub="°C" />
           <RowLabel label="Rain"  height={ROW_HEIGHTS.rain}  sub="%" />
           {hasMarine && <RowLabel label="Swell" height={ROW_HEIGHTS.swell} sub="m" />}
-          <RowLabel label="Tide"  height={ROW_HEIGHTS.tide} />
+          {hasTides  && <RowLabel label="Tide"  height={TIDE_H} sub="m" />}
           <View style={{ height: ROW_HEIGHTS.time }} />
         </View>
 
-        {/* Scrollable data columns */}
+        {/* Scrollable content — columns + tide chart stacked in same scroll container */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={s.scrollArea}
-          contentContainerStyle={s.scrollContent}
+          contentContainerStyle={{ flexDirection: 'column' }}
           onLayout={e => setScrollW(e.nativeEvent.layout.width)}
         >
-          {display.map((h, i) => {
-            const colWidth = scrollW > 0
-              ? Math.max(COL_W, Math.floor((scrollW - (display.length - 1) * 2) / display.length))
-              : COL_W;
-            return (
+          {/* Hour columns */}
+          <View style={{ flexDirection: 'row', gap: 2 }}>
+            {display.map((h, i) => (
               <TimeColumn
                 key={i}
                 h={h}
@@ -223,16 +312,28 @@ export default function ConditionsTimeline({ hourly = [], date, startHour, endHo
                 hasMarine={hasMarine}
                 colWidth={colWidth}
               />
-            );
-          })}
+            ))}
+          </View>
+
+          {/* Tide line chart — spans full width, scrolls with columns */}
+          {hasTides && (
+            <TideLineChart
+              display={display}
+              tideHeightMap={tideHeightMap}
+              tideExtremeMap={tideExtremeMap}
+              colWidth={colWidth}
+            />
+          )}
         </ScrollView>
 
       </View>
 
-      {/* Tide note */}
-      <View style={s.tideNote}>
-        <Text style={s.tideNoteText}>Tide: set EXPO_PUBLIC_WORLDTIDES_API_KEY to enable</Text>
-      </View>
+      {/* No-data note */}
+      {!hasTides && (
+        <View style={s.tideNote}>
+          <Text style={s.tideNoteText}>Tide data unavailable — add EXPO_PUBLIC_WORLDTIDES_API_KEY</Text>
+        </View>
+      )}
 
     </View>
   );
@@ -247,7 +348,6 @@ const s = StyleSheet.create({
   grid:        { flexDirection: 'row' },
   labelsCol:   { },
   scrollArea:  { flex: 1 },
-  scrollContent: { flexDirection: 'row', gap: 2 },
 
   rowLabelCell: { justifyContent: 'center', paddingRight: 6, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight },
   rowLabelText: { fontSize: 9, fontWeight: '600', color: colors.textMid },

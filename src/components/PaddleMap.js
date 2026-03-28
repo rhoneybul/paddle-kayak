@@ -1,5 +1,5 @@
-import { useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import MapView, { Polyline, Marker, Callout } from 'react-native-maps';
 import { colors } from '../theme';
 
@@ -108,7 +108,7 @@ const GREY_MAP_STYLE = [
  * The route at `selectedIdx` is drawn thick + solid; others are thin + dashed.
  */
 export default function PaddleMap({
-  height = 240,
+  height = 300,
   coords,
   routes = [],
   selectedIdx = 0,
@@ -119,8 +119,38 @@ export default function PaddleMap({
   onAddPoint,
   onMovePoint,
   simpleRoute = false,
+  liveTrack = [],
+  staticView = false,
 }) {
   const mapRef = useRef(null);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery]     = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [landmarks, setLandmarks]         = useState([]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery.trim())}&limit=5`;
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Solvaa/1.0' } });
+      const data = await resp.json();
+      const results = data.map(r => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon), name: r.display_name.split(',').slice(0, 2).join(',') }));
+      setLandmarks(results);
+
+      // Fit map to show both the route and all landmark results
+      if (results.length > 0 && mapRef.current) {
+        const routeCoords = parsed.flatMap(r => r.points);
+        const lmCoords    = results.map(r => ({ latitude: r.lat, longitude: r.lon }));
+        const allCoords   = [...routeCoords, ...lmCoords];
+        mapRef.current.fitToCoordinates(allCoords.length > 0 ? allCoords : lmCoords, {
+          edgePadding: { top: 60, right: 60, bottom: 80, left: 60 },
+          animated: true,
+        });
+      }
+    } catch { /* ignore */ }
+    finally { setSearchLoading(false); }
+  };
   const parsed = useMemo(
     () => routes.map((r, i) => ({
       points: parseGpx(r.waypoints || ''),
@@ -187,8 +217,8 @@ export default function PaddleMap({
         showsMyLocationButton={false}
         showsCompass={false}
         showsScale={false}
-        zoomEnabled
-        scrollEnabled
+        zoomEnabled={!staticView}
+        scrollEnabled={!staticView}
         pitchEnabled={false}
       >
         {/* Location pin when no routes yet */}
@@ -270,7 +300,65 @@ export default function PaddleMap({
             strokeWidth={2.5}
           />
         )}
+
+        {/* Live GPS track */}
+        {liveTrack.length >= 2 && (
+          <Polyline
+            coordinates={liveTrack.map(p => ({ latitude: p.lat, longitude: p.lon }))}
+            strokeColor={colors.good}
+            strokeWidth={3}
+          />
+        )}
+        {liveTrack.length >= 1 && (
+          <Marker
+            coordinate={{ latitude: liveTrack[liveTrack.length - 1].lat, longitude: liveTrack[liveTrack.length - 1].lon }}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={styles.liveDot} />
+          </Marker>
+        )}
+
+        {/* Landmark search results */}
+        {landmarks.map((lm, i) => (
+          <Marker key={`lm${i}`} coordinate={{ latitude: lm.lat, longitude: lm.lon }}>
+            <View style={styles.landmarkDot} />
+            <Callout>
+              <View style={styles.landmarkCallout}>
+                <Text style={styles.landmarkCalloutText}>{lm.name}</Text>
+              </View>
+            </Callout>
+          </Marker>
+        ))}
       </MapView>
+
+      {/* Landmark search */}
+      {searchVisible ? (
+        <View style={styles.searchBar}>
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search landmarks…"
+            placeholderTextColor={colors.textMuted}
+            returnKeyType="search"
+            onSubmitEditing={handleSearch}
+            autoFocus
+          />
+          {searchLoading
+            ? <ActivityIndicator size="small" color={colors.primary} style={{ marginHorizontal: 6 }} />
+            : <TouchableOpacity onPress={handleSearch} style={styles.searchGoBtn} activeOpacity={0.7}>
+                <Text style={styles.searchGoBtnText}>Go</Text>
+              </TouchableOpacity>
+          }
+          <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); setLandmarks([]); }} style={styles.searchCloseBtn} activeOpacity={0.7}>
+            <Text style={styles.searchCloseBtnText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity style={styles.searchOpenBtn} onPress={() => setSearchVisible(true)} activeOpacity={0.75}>
+          <Text style={styles.searchOpenBtnText}>⌕</Text>
+        </TouchableOpacity>
+      )}
 
       {(overlayTitle || overlayMeta) && (
         <View style={styles.overlay}>
@@ -308,4 +396,18 @@ const styles = StyleSheet.create({
   kpDotDrawn: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', borderWidth: 2, borderColor: '#1d4ed8' },
   centerBtn:  { position: 'absolute', bottom: 12, right: 12, width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.93)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
   centerBtnText: { fontSize: 16, color: colors.primary, lineHeight: 18 },
+  // Live track
+  liveDot:    { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.good, borderWidth: 2.5, borderColor: '#fff' },
+  // Landmark search
+  searchOpenBtn:   { position: 'absolute', bottom: 52, left: 8, width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.93)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
+  searchOpenBtnText: { fontSize: 17, color: colors.primary },
+  searchBar:       { position: 'absolute', bottom: 52, left: 8, right: 48, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.96)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)', paddingHorizontal: 8, height: 34 },
+  searchInput:     { flex: 1, fontSize: 12, color: colors.text, paddingVertical: 0 },
+  searchGoBtn:     { paddingHorizontal: 8, paddingVertical: 4 },
+  searchGoBtnText: { fontSize: 11, fontWeight: '600', color: colors.primary },
+  searchCloseBtn:  { paddingHorizontal: 6, paddingVertical: 4 },
+  searchCloseBtnText: { fontSize: 12, color: colors.textMuted },
+  landmarkDot:     { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.caution, borderWidth: 2, borderColor: '#fff' },
+  landmarkCallout: { padding: 6, maxWidth: 160 },
+  landmarkCalloutText: { fontSize: 11, color: colors.text },
 });

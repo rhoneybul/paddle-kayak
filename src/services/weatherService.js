@@ -87,9 +87,10 @@ function parseWeatherData(raw) {
   const bestHour    = hourlyForecast.find(h => h.windSpeed <= 15 && h.precipProb <= 30);
 
   return {
-    current:       currentConditions,
-    hourly:        hourlyForecast,
-    daily:         dailyForecast,
+    current:          currentConditions,
+    hourly:           hourlyForecast,
+    daily:            dailyForecast,
+    utcOffsetSeconds: raw.utc_offset_seconds ?? 0,
     safetyScore,
     safetyLabel:   safetyScore >= 80 ? 'Excellent' : safetyScore >= 60 ? 'Good' : safetyScore >= 40 ? 'Moderate' : 'Challenging',
     safetyColor:   safetyScore >= 80 ? '#3a6a4a' : safetyScore >= 60 ? '#4a6a8a' : safetyScore >= 40 ? '#8a6a2a' : '#8a4a3a',

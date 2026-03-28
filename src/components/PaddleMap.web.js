@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, Platform } from 'react-native';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { View, Text, TextInput, Image, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { colors } from '../theme';
 
 // ── Coordinate parsers (shared with native) ───────────────────────────────────
@@ -141,7 +141,7 @@ function calcZoom(bMinLon, bMaxLon, bMinLat, bMaxLat, vpW, vpH) {
 // ── Web component ─────────────────────────────────────────────────────────────
 
 export default function PaddleMap({
-  height = 240,
+  height = 300,
   coords,
   routes = [],
   selectedIdx = 0,
@@ -155,8 +155,49 @@ export default function PaddleMap({
   windDate = null,
   onWindDateChange,
   simpleRoute = false,
+  liveTrack = [],
+  staticView = false,
+  tideHeightMap = {},
+  tideExtremeMap = {},
 }) {
   const [vpW, setVpW] = useState(390);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery]     = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [landmarks, setLandmarks]         = useState([]);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    try {
+      // Build a viewbox biased to the route area (helps Nominatim rank nearby results first)
+      const rb = routeBoundsForFit;
+      const centerLat = rb ? (rb.minLat + rb.maxLat) / 2 : coords?.lat ?? null;
+      const centerLon = rb ? (rb.minLon + rb.maxLon) / 2 : coords?.lon ?? null;
+      const viewbox = rb
+        ? `&viewbox=${rb.minLon - 0.2},${rb.maxLat + 0.2},${rb.maxLon + 0.2},${rb.minLat - 0.2}&bounded=0`
+        : '';
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery.trim())}&limit=10${viewbox}`;
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Solvaa/1.0' } });
+      const data = await resp.json();
+      const all = data.map(r => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon), name: r.display_name.split(',').slice(0, 2).join(',') }));
+
+      // Filter to results within 10 km of the route centre
+      const nearby = centerLat != null && centerLon != null
+        ? all.filter(r => {
+            const R = 6371;
+            const dLat = (r.lat - centerLat) * Math.PI / 180;
+            const dLon = (r.lon - centerLon) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2
+              + Math.cos(centerLat * Math.PI / 180) * Math.cos(r.lat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) <= 10;
+          })
+        : all;
+
+      setLandmarks(nearby);
+    } catch { /* ignore */ }
+    finally { setSearchLoading(false); }
+  };
   const [zoomDelta, setZoomDelta] = useState(0);
   const [mapLayer, setMapLayer] = useState('map');
   const [windHour, setWindHour] = useState(9);
@@ -175,7 +216,7 @@ export default function PaddleMap({
     }
     return out; // all available days
   })();
-  const activeWindDate = windDate || windDates[0] || null;
+  const activeWindDate = windDate ?? null; // only show when a date is explicitly selected
 
   // Reset zoom + pan when selected route changes
   useEffect(() => { setZoomDelta(0); }, [selectedIdx]);
@@ -189,6 +230,7 @@ export default function PaddleMap({
   // Web: wheel-to-zoom + pinch-to-zoom via DOM events
   useEffect(() => {
     if (Platform.OS !== 'web') return;
+    if (staticView) return;
     const el = mapRef.current;
     if (!el) return;
 
@@ -230,6 +272,71 @@ export default function PaddleMap({
       el.removeEventListener('touchend', onTouchEnd);
     };
   }, []);
+
+  // Bounding box of all route points (or coord pin) — used to fit map after search
+  const routeBoundsForFit = useMemo(() => {
+    const pts = routes.flatMap(r => parseGpx(r.waypoints || []));
+    if (pts.length > 0) {
+      const lats = pts.map(p => p.latitude);
+      const lons = pts.map(p => p.longitude);
+      return { minLat: Math.min(...lats), maxLat: Math.max(...lats), minLon: Math.min(...lons), maxLon: Math.max(...lons) };
+    }
+    if (coords) return { minLat: coords.lat, maxLat: coords.lat, minLon: coords.lon, maxLon: coords.lon };
+    return null;
+  }, [routes, coords]);
+
+  // Fit map to include route + landmark pins whenever search results arrive
+  const vpWRef = useRef(vpW);
+  useEffect(() => { vpWRef.current = vpW; }, [vpW]);
+
+  useEffect(() => {
+    if (landmarks.length === 0) return;
+    const currentVpW = vpWRef.current;
+    const rb = routeBoundsForFit;
+
+    const lmLats = landmarks.map(l => l.lat);
+    const lmLons = landmarks.map(l => l.lon);
+    const allLats = rb ? [rb.minLat, rb.maxLat, ...lmLats] : lmLats;
+    const allLons = rb ? [rb.minLon, rb.maxLon, ...lmLons] : lmLons;
+
+    const minLat = Math.min(...allLats), maxLat = Math.max(...allLats);
+    const minLon = Math.min(...allLons), maxLon = Math.max(...allLons);
+    const dLat = Math.max(maxLat - minLat, 0.005);
+    const dLon = Math.max(maxLon - minLon, 0.005);
+    const pMinLat = minLat - dLat * 0.25, pMaxLat = maxLat + dLat * 0.25;
+    const pMinLon = minLon - dLon * 0.25, pMaxLon = maxLon + dLon * 0.25;
+
+    const targetZoom = Math.max(1, Math.min(18, calcZoom(pMinLon, pMaxLon, pMinLat, pMaxLat, currentVpW, height)));
+    const targetCenterLon = (pMinLon + pMaxLon) / 2;
+    const targetCenterLat = (pMinLat + pMaxLat) / 2;
+
+    // Compute autoZoom for the route bounds (same formula as the main render path)
+    let baseCenterLon, baseCenterLat, baseAutoZoom;
+    if (rb) {
+      const rbDLat = Math.max(rb.maxLat - rb.minLat, 0.004);
+      const rbDLon = Math.max(rb.maxLon - rb.minLon, 0.004);
+      baseAutoZoom = calcZoom(
+        rb.minLon - rbDLon * PAD, rb.maxLon + rbDLon * PAD,
+        rb.minLat - rbDLat * PAD, rb.maxLat + rbDLat * PAD,
+        currentVpW, height,
+      );
+      baseCenterLon = (rb.minLon + rb.maxLon) / 2;
+      baseCenterLat = (rb.minLat + rb.maxLat) / 2;
+    } else {
+      // Coords-only mode — base autoZoom is 11
+      baseCenterLon = coords?.lon ?? targetCenterLon;
+      baseCenterLat = coords?.lat ?? targetCenterLat;
+      baseAutoZoom  = 11;
+    }
+
+    // Pan so that targetCenter is at screen center (see render formula derivation)
+    const newPanX = lonToWorld(baseCenterLon, targetZoom) - lonToWorld(targetCenterLon, targetZoom);
+    const newPanY = latToWorld(baseCenterLat, targetZoom) - latToWorld(targetCenterLat, targetZoom);
+
+    panOffset.current = { x: newPanX, y: newPanY };
+    setPanState({ x: newPanX, y: newPanY });
+    setZoomDelta(targetZoom - baseAutoZoom);
+  }, [landmarks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const allParsed = routes.map(r => parseGpx(r.waypoints || []));
   const allPts    = allParsed.flat();
@@ -384,10 +491,11 @@ export default function PaddleMap({
   return (
     <View
       ref={mapRef}
-      style={{ width: '100%', height, overflow: 'hidden', backgroundColor: '#c8dce8', cursor: 'grab' }}
+      style={{ width: '100%', height, overflow: 'hidden', backgroundColor: '#c8dce8', cursor: staticView ? 'default' : 'grab' }}
       onLayout={e => setVpW(e.nativeEvent.layout.width)}
-      onStartShouldSetResponder={() => true}
+      onStartShouldSetResponder={() => !staticView}
       onResponderGrant={e => {
+        if (staticView) return;
         const now = Date.now();
         if (now - lastTapRef.current < 300) { setZoomDelta(d => d + 1); }
         lastTapRef.current = now;
@@ -613,44 +721,36 @@ export default function PaddleMap({
           );
         })()}
 
-        {/* Wind badge — top-left of map */}
-        {(() => {
-          if (!windHourly.length || !activeWindDate) return null;
-          // Filter to selected date, then find closest hour
-          const dayEntries = windHourly.filter(h => h.time?.startsWith(activeWindDate));
-          const pool = dayEntries.length ? dayEntries : windHourly;
-          const hr = pool.reduce((best, h) => {
-            const hh = parseInt(h.time?.slice(11, 13) ?? '0', 10);
-            const bh = best ? parseInt(best.time?.slice(11, 13) ?? '0', 10) : -999;
-            return Math.abs(hh - windHour) < Math.abs(bh - windHour) ? h : best;
-          }, null);
-          if (!hr) return null;
-          const speedKt = Math.round(hr.windSpeed ?? 0);
-          const fromDeg = hr.windDir ?? 0;
-          // Same colour logic as ConditionsTimeline windBarColor
-          const wCol = speedKt > 20 ? colors.warn : speedKt > 12 ? colors.caution : colors.primary;
-          // Same rotation as ConditionsTimeline arrowStyle: rotate by (fromDeg+180)%360
-          const rotateDeg = (fromDeg + 180) % 360;
-          const W = 'Inter, -apple-system, sans-serif';
-          const cx = 29, cy = 30;
+        {/* Live GPS track */}
+        {liveTrack.length >= 2 && (() => {
+          const lsp = liveTrack.map(p => toScreen(p.lat, p.lon));
+          const d   = 'M' + lsp.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join('L');
+          const tip = lsp[lsp.length - 1];
           return (
             <g>
-              <rect x={4} y={4} width={50} height={52} rx={8} fill="rgba(255,255,255,0.94)" />
-              <text x={cx} y={17} textAnchor="middle" fontSize="7" fontWeight="600" fill="#999" fontFamily={W} letterSpacing="0.5">WIND</text>
-              {/* ↑ arrow rotated exactly like ConditionsTimeline */}
-              <text
-                x={cx} y={cy + 6}
-                textAnchor="middle"
-                fontSize="22"
-                fontWeight="400"
-                fill={wCol}
-                fontFamily={W}
-                transform={`rotate(${rotateDeg}, ${cx}, ${cy})`}
-              >↑</text>
-              <text x={cx} y={52} textAnchor="middle" fontSize="10" fontWeight="700" fill={wCol} fontFamily={W}>{speedKt}kt</text>
+              <path d={d} stroke="#16a34a" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx={tip.x} cy={tip.y} r={7} fill="#16a34a" stroke="#fff" strokeWidth={2.5} />
+              <circle cx={tip.x} cy={tip.y} r={3} fill="#fff" />
             </g>
           );
         })()}
+
+        {/* Landmark search markers */}
+        {landmarks.map((lm, i) => {
+          const sp = toScreen(lm.lat, lm.lon);
+          const F  = 'Inter, -apple-system, sans-serif';
+          const labelW = Math.min(lm.name.length * 5.5 + 12, 160);
+          return (
+            <g key={`lm${i}`}>
+              <circle cx={sp.x} cy={sp.y} r={7} fill={colors.caution} stroke="#fff" strokeWidth={2} />
+              <rect x={sp.x - labelW / 2} y={sp.y - 26} width={labelW} height={16} rx={4} fill="rgba(255,255,255,0.94)" />
+              <text x={sp.x} y={sp.y - 14} textAnchor="middle" fontSize="9" fontWeight="600" fill={colors.caution} fontFamily={F}>
+                {lm.name.length > 24 ? lm.name.slice(0, 22) + '…' : lm.name}
+              </text>
+            </g>
+          );
+        })}
+
       </svg>
 
       {/* Right-side controls — layer toggle above zoom */}
@@ -690,21 +790,23 @@ export default function PaddleMap({
           })}
         </View>
         {/* Zoom controls */}
-        <View style={{ backgroundColor: 'rgba(255,255,255,0.93)', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' }}>
-          <TouchableOpacity onPress={() => setZoomDelta(d => Math.min(d + 1, 18 - autoZoom))}
-            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.1)' }} activeOpacity={0.7}>
-            <Text style={{ fontSize: 18, color: colors.text, lineHeight: 20 }}>+</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setZoomDelta(d => Math.max(d - 1, 1 - autoZoom))}
-            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.1)' }} activeOpacity={0.7}>
-            <Text style={{ fontSize: 18, color: colors.text, lineHeight: 20 }}>−</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => { setZoomDelta(0); panOffset.current = { x: 0, y: 0 }; setPanState({ x: 0, y: 0 }); }}
-            style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.7}>
-            <Text style={{ fontSize: 13, color: colors.primary, lineHeight: 15 }}>⊙</Text>
-          </TouchableOpacity>
-        </View>
+        {!staticView && (
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.93)', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' }}>
+            <TouchableOpacity onPress={() => setZoomDelta(d => Math.min(d + 1, 18 - autoZoom))}
+              style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.1)' }} activeOpacity={0.7}>
+              <Text style={{ fontSize: 18, color: colors.text, lineHeight: 20 }}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setZoomDelta(d => Math.max(d - 1, 1 - autoZoom))}
+              style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.1)' }} activeOpacity={0.7}>
+              <Text style={{ fontSize: 18, color: colors.text, lineHeight: 20 }}>−</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setZoomDelta(0); panOffset.current = { x: 0, y: 0 }; setPanState({ x: 0, y: 0 }); }}
+              style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }} activeOpacity={0.7}>
+              <Text style={{ fontSize: 13, color: colors.primary, lineHeight: 15 }}>⊙</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Map attribution */}
@@ -714,34 +816,214 @@ export default function PaddleMap({
         </Text>
       </View>
 
+      {/* Landmark search — top-left */}
+      {!staticView && searchVisible ? (
+        <View style={{ position: 'absolute', top: 8, left: 8, right: 48, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.96)', borderRadius: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)', paddingHorizontal: 8, height: 34 }}>
+          <TextInput
+            style={{ flex: 1, fontSize: 12, color: colors.text, paddingVertical: 0, outlineStyle: 'none' }}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search landmarks…"
+            placeholderTextColor={colors.textMuted}
+            returnKeyType="search"
+            onSubmitEditing={handleSearch}
+            autoFocus
+          />
+          {searchLoading
+            ? <ActivityIndicator size="small" color={colors.primary} style={{ marginHorizontal: 6 }} />
+            : <TouchableOpacity onPress={handleSearch} style={{ paddingHorizontal: 8, paddingVertical: 4 }} activeOpacity={0.7}>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary }}>Go</Text>
+              </TouchableOpacity>
+          }
+          <TouchableOpacity onPress={() => { setSearchVisible(false); setSearchQuery(''); setLandmarks([]); }} style={{ paddingHorizontal: 6 }} activeOpacity={0.7}>
+            <Text style={{ fontSize: 13, color: colors.textMuted }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ) : !staticView ? (
+        <TouchableOpacity
+          style={{ position: 'absolute', top: 8, left: 8, width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.93)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' }}
+          onPress={() => setSearchVisible(true)}
+          activeOpacity={0.75}
+        >
+          <Text style={{ fontSize: 17, color: colors.primary }}>⌕</Text>
+        </TouchableOpacity>
+      ) : null}
+
       {/* Title overlay */}
       {(overlayTitle || overlayMeta) && (
-        <View style={{ position: 'absolute', bottom: windHourly.length > 0 ? 44 : 12, left: 12, right: 60, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}>
+        <View style={{ position: 'absolute', bottom: 12, left: 12, right: 60, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}>
           {overlayTitle ? <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }} numberOfLines={1}>{overlayTitle}</Text> : null}
           {overlayMeta  ? <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }} numberOfLines={1}>{overlayMeta}</Text> : null}
         </View>
       )}
 
-      {/* Wind selector — rendered INSIDE the map view so it doesn't overflow and block UI below */}
-      {windHourly.length > 0 && (
-        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, gap: 5, backgroundColor: 'rgba(255,255,255,0.93)', borderTopWidth: 0.5, borderTopColor: 'rgba(0,0,0,0.1)' }}>
-          <Text style={{ fontSize: 8, fontWeight: '600', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginRight: 2 }}>Wind</Text>
-          {[6, 9, 12, 15, 18].map(h => {
-            const label = h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
-            const active = windHour === h;
-            return (
-              <TouchableOpacity
-                key={h}
-                onPress={() => setWindHour(h)}
-                style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, backgroundColor: active ? colors.primary : colors.bgDeep, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 10, fontWeight: '500', color: active ? '#fff' : colors.textMid }}>{label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      )}
+      {/* Wind + Tide compact strip — full width, bottom of map */}
+      {windHourly.length > 0 && (() => {
+        const stripDate = activeWindDate ?? windDates[0];
+        if (!stripDate) return null;
+        const entries = windHourly
+          .filter(h => h.time?.startsWith(stripDate))
+          .filter(h => { const hr = parseInt(h.time.slice(11, 13) ?? '99', 10); return hr >= 5 && hr <= 21; })
+          .sort((a, b) => a.time.localeCompare(b.time));
+        if (entries.length === 0) return null;
+
+        const hasTides   = Object.keys(tideHeightMap).length > 0;
+        const WIND_MAX   = 26;
+        const TIDE_H     = hasTides ? 14 : 0;
+        const TIDE_LBL_H = hasTides ? 18 : 0;
+        const LABEL_H    = 9;
+        const PAD_TOP    = 5;
+        const PAD_BOT    = 3;
+        const GAP        = hasTides ? 3 : 0;
+        const STRIP_H    = PAD_TOP + WIND_MAX + GAP + TIDE_H + (hasTides ? 2 : 0) + TIDE_LBL_H + 2 + LABEL_H + PAD_BOT;
+        const WIND_BASE  = PAD_TOP + WIND_MAX;
+        const TIDE_TOP   = WIND_BASE + GAP;
+        const TIDE_BOT   = TIDE_TOP + TIDE_H;
+        const TIDE_LBL_Y = TIDE_BOT + 2 + TIDE_LBL_H - 1;
+        const LABEL_Y    = TIDE_LBL_Y + 2 + LABEL_H - 1;
+
+        const n     = entries.length;
+        const stripW = vpW - 16;
+        const colW   = stripW / n;
+        const toX    = i => i * colW + colW / 2;
+
+        const maxSpd = Math.max(...entries.map(h => h.windSpeed ?? 0), 1);
+
+        // Tide sparkline
+        const tideHeights = entries.map(h => {
+          if (!hasTides) return null;
+          return tideHeightMap[h.time.slice(0, 13) + ':00'] ?? null;
+        });
+        const validT   = tideHeights.filter(t => t !== null);
+        const minTide  = validT.length ? Math.min(...validT) : 0;
+        const maxTide  = validT.length ? Math.max(...validT) : 1;
+        const tideRange = Math.max(maxTide - minTide, 0.01);
+        const toTY = h => TIDE_TOP + ((maxTide - h) / tideRange) * TIDE_H;
+
+        let tideLine = '', tideArea = '';
+        if (hasTides && validT.length >= 2) {
+          const pts = tideHeights.map((h, i) => h != null ? { x: toX(i), y: toTY(h) } : null).filter(Boolean);
+          tideLine = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+          for (let i = 1; i < pts.length; i++) {
+            const cx = ((pts[i - 1].x + pts[i].x) / 2).toFixed(1);
+            tideLine += ` C ${cx} ${pts[i - 1].y.toFixed(1)}, ${cx} ${pts[i].y.toFixed(1)}, ${pts[i].x.toFixed(1)} ${pts[i].y.toFixed(1)}`;
+          }
+          tideArea = `${tideLine} L ${pts[pts.length - 1].x.toFixed(1)} ${TIDE_BOT} L ${pts[0].x.toFixed(1)} ${TIDE_BOT} Z`;
+        }
+
+        return (
+          <View
+            style={{ position: 'absolute', bottom: 8, left: 8, right: 8, height: STRIP_H, backgroundColor: 'rgba(255,255,255,0.93)', borderRadius: 8, overflow: 'hidden', borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.1)' }}
+            onStartShouldSetResponder={() => true}
+            onResponderRelease={e => {
+              const rect = e.currentTarget?.getBoundingClientRect?.();
+              if (!rect) return;
+              const lx = e.nativeEvent.pageX - rect.left;
+              const i  = Math.max(0, Math.min(n - 1, Math.floor(lx / colW)));
+              setWindHour(parseInt(entries[i].time.slice(11, 13), 10));
+            }}
+          >
+            <svg
+              width={stripW} height={STRIP_H}
+              style={{ display: 'block' }}
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              {/* Selected hour highlight */}
+              {entries.map((h, i) => {
+                const hr = parseInt(h.time.slice(11, 13), 10);
+                if (hr !== windHour) return null;
+                return <rect key={i} x={i * colW} y={0} width={colW} height={STRIP_H} fill="rgba(37,99,235,0.09)" />;
+              })}
+
+              {/* Wind bars */}
+              {entries.map((h, i) => {
+                const spd  = h.windSpeed ?? 0;
+                const barH = Math.max(2, Math.round((spd / maxSpd) * WIND_MAX));
+                const col  = spd > 20 ? '#dc2626' : spd > 12 ? '#d97706' : '#2563eb';
+                const bw   = Math.max(5, colW * 0.42);
+                const x    = toX(i);
+                const rotateDeg = h.windDir != null ? (h.windDir + 180) % 360 : null;
+                const spdRound = Math.round(spd);
+                return (
+                  <g key={i}>
+                    <rect x={x - bw / 2} y={WIND_BASE - barH} width={bw} height={barH} fill={col + 'cc'} rx={1.5} />
+                    {/* Wind direction arrow above bar */}
+                    {rotateDeg != null && barH >= 5 && (
+                      <text x={x} y={WIND_BASE - barH - 2}
+                        textAnchor="middle" fontSize="7" fill={col} fontFamily="system-ui,sans-serif"
+                        transform={`rotate(${rotateDeg},${x},${WIND_BASE - barH - 4})`}
+                      >↑</text>
+                    )}
+                    {/* Knot value on bar (when bar tall enough), or just above if small */}
+                    {spdRound > 0 && barH >= 8 && (
+                      <text x={x} y={WIND_BASE - 2} textAnchor="middle" fontSize="5.5"
+                        fill="#fff" fontWeight="600" fontFamily="system-ui,sans-serif">{spdRound}</text>
+                    )}
+                    {spdRound > 0 && barH < 8 && barH >= 3 && (
+                      <text x={x} y={WIND_BASE - barH - 1} textAnchor="middle" fontSize="5.5"
+                        fill={col} fontWeight="600" fontFamily="system-ui,sans-serif">{spdRound}</text>
+                    )}
+                  </g>
+                );
+              })}
+
+              {/* Separator */}
+              {hasTides && <line x1={0} y1={WIND_BASE + GAP / 2} x2={stripW} y2={WIND_BASE + GAP / 2} stroke="rgba(0,0,0,0.07)" strokeWidth={0.5} />}
+
+              {/* Tide area + line */}
+              {tideArea && <path d={tideArea} fill="rgba(37,99,235,0.08)" />}
+              {tideLine  && <path d={tideLine} stroke="#2563eb" strokeWidth={1.2} fill="none" strokeLinecap="round" />}
+
+              {/* HW / LW dots + exact time + height labels below sparkline */}
+              {hasTides && entries.map((h, i) => {
+                const ext = tideExtremeMap[h.time.slice(0, 13) + ':00'];
+                const ht  = tideHeights[i];
+                if (!ext || ht == null) return null;
+                const cx = toX(i);
+                const cy = toTY(ht);
+                return (
+                  <g key={i}>
+                    <circle cx={cx} cy={cy} r={2.5} fill="#2563eb" stroke="#fff" strokeWidth={0.8} />
+                    {/* Exact turn time */}
+                    <text x={cx} y={TIDE_BOT + 8} textAnchor="middle" fontSize={6} fontWeight="600"
+                      fill="#2563eb" fontFamily="system-ui,sans-serif">{ext.exactTime}</text>
+                    {/* Height */}
+                    <text x={cx} y={TIDE_BOT + 16} textAnchor="middle" fontSize={5.5} fontWeight="400"
+                      fill="#2563eb" fontFamily="system-ui,sans-serif">{ht.toFixed(1)}m</text>
+                  </g>
+                );
+              })}
+
+              {/* Hour labels */}
+              {entries.map((h, i) => {
+                const hr = parseInt(h.time.slice(11, 13), 10);
+                if (![6, 9, 12, 15, 18].includes(hr)) return null;
+                const lbl = hr < 12 ? `${hr}am` : hr === 12 ? '12p' : `${hr - 12}pm`;
+                return (
+                  <text key={i} x={toX(i)} y={LABEL_Y} textAnchor="middle" fontSize={7}
+                    fill="rgba(0,0,0,0.38)" fontFamily="system-ui,sans-serif">{lbl}</text>
+                );
+              })}
+
+              {/* Selected-hour wind speed + tide label (top-left) */}
+              {(() => {
+                const selEntry = entries.find(h => parseInt(h.time.slice(11, 13), 10) === windHour);
+                if (!selEntry) return null;
+                const spd = Math.round(selEntry.windSpeed ?? 0);
+                const wCol = spd > 20 ? '#dc2626' : spd > 12 ? '#d97706' : '#2563eb';
+                const selIdx = entries.indexOf(selEntry);
+                const tideHt = hasTides ? (tideHeights[selIdx]) : null;
+                const selHr  = windHour < 12 ? `${windHour}am` : windHour === 12 ? '12pm' : `${windHour - 12}pm`;
+                const label  = tideHt != null ? `${selHr} · ${spd}kt · ${tideHt.toFixed(1)}m` : `${selHr} · ${spd}kt`;
+                return (
+                  <text x={5} y={PAD_TOP + 7} fontSize={7.5} fontWeight="600"
+                    fill={wCol} fontFamily="system-ui,sans-serif">{label}</text>
+                );
+              })()}
+            </svg>
+          </View>
+        );
+      })()}
     </View>
   );
 }

@@ -19,6 +19,7 @@ import { planPaddleWithWeather, hasApiKey, refineRoute, askSafety } from '../ser
 import { SKILL_LEVELS, getStravaTokens, fetchStravaActivities, inferSkillFromStrava } from '../services/stravaService';
 import { searchLocations, MIN_SEARCH_LENGTH, SEARCH_DEBOUNCE_MS } from '../services/geocodingService';
 import { getWeatherWithCache } from '../services/weatherService';
+import { fetchTides, buildTideHeightMap, buildTideExtremeMap } from '../services/tideService';
 import { saveRoute, getSavedRoutes, deleteSavedRoute, saveSearch, deleteSavedSearch } from '../services/storageService';
 import {
   validateMaritimeRoute,
@@ -119,6 +120,8 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
   // Weather
   const [weatherData, setWeatherData]     = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [tideHeightMap, setTideHeightMap]   = useState({});
+  const [tideExtremeMap, setTideExtremeMap] = useState({});
   const [resultsDate, setResultsDate]     = useState(null); // date selected on results for weather
 
   const weatherDates = useMemo(() => {
@@ -173,7 +176,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
       ? Math.round(screenHeight * 0.64)
       : mapExpanded
         ? Math.round(screenHeight * 0.52)
-        : 260;
+        : 310;
     Animated.spring(mapHeightAnim, {
       toValue,
       useNativeDriver: false,
@@ -279,6 +282,21 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
     })();
     return () => { cancelled = true; };
   }, [locationCoords?.lat, locationCoords?.lng]);
+
+  // Fetch tides once weather is loaded (need utcOffsetSeconds to align keys)
+  useEffect(() => {
+    if (!locationCoords || !weatherData) { setTideHeightMap({}); setTideExtremeMap({}); return; }
+    const offset = weatherData.utcOffsetSeconds ?? 0;
+    let cancelled = false;
+    (async () => {
+      const data = await fetchTides(locationCoords.lat, locationCoords.lng);
+      if (!cancelled && data) {
+        setTideHeightMap(buildTideHeightMap(data.heights, offset));
+        setTideExtremeMap(buildTideExtremeMap(data.extremes, offset));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [locationCoords?.lat, locationCoords?.lng, weatherData?.utcOffsetSeconds]);
 
   // Debounced location search
   const handleDestinationChange = useCallback((text) => {
@@ -879,7 +897,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
         {/* Map — animates taller when expanded or drawing */}
         <Animated.View style={{ height: mapHeightAnim, overflow: 'hidden' }}>
           <PaddleMap
-            height={drawMode ? Math.round(screenHeight * 0.64) : mapExpanded ? Math.round(screenHeight * 0.52) : 260}
+            height={drawMode ? Math.round(screenHeight * 0.64) : mapExpanded ? Math.round(screenHeight * 0.52) : 310}
             coords={locationCoords ? { lat: locationCoords.lat, lon: locationCoords.lng } : undefined}
             routes={routes}
             selectedIdx={selectedRouteIdx}
@@ -891,6 +909,8 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
             windHourly={weatherData?.hourly || []}
             windDate={resultsDate}
             onWindDateChange={setResultsDate}
+            tideHeightMap={tideHeightMap}
+            tideExtremeMap={tideExtremeMap}
           />
           {/* Draw stats overlay — top of map, semi-transparent */}
           {drawMode && drawnPoints.length > 0 && (
@@ -1064,6 +1084,8 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
                 startHour={9}
                 endHour={18}
                 routeBearing={gpxRouteBearing(sel?.waypoints)}
+                tideHeightMap={tideHeightMap}
+                tideExtremeMap={tideExtremeMap}
               />
             ) : (
               <View style={[s.weatherCard, { marginHorizontal: P, marginBottom: 4 }]}>

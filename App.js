@@ -25,8 +25,9 @@ import EmergencyScreen    from './src/screens/EmergencyScreen';
 import HistoryScreen      from './src/screens/HistoryScreen';
 import SavedRoutesScreen   from './src/screens/SavedRoutesScreen';
 import YourPaddlesScreen   from './src/screens/YourPaddlesScreen';
-import SavedSearchesScreen from './src/screens/SavedSearchesScreen';
-import WebWrapper         from './src/components/WebWrapper';
+import SavedSearchesScreen    from './src/screens/SavedSearchesScreen';
+import CompletedPaddlesScreen from './src/screens/CompletedPaddlesScreen';
+import WebWrapper             from './src/components/WebWrapper';
 
 const Stack = createStackNavigator();
 
@@ -81,7 +82,8 @@ export default Sentry.wrap(function App() {
             <Stack.Screen name="History"       component={HistoryScreen} />
             <Stack.Screen name="SavedRoutes"    component={SavedRoutesScreen} />
             <Stack.Screen name="YourPaddles"    component={YourPaddlesScreen} />
-            <Stack.Screen name="SavedSearches"  component={SavedSearchesScreen} />
+            <Stack.Screen name="SavedSearches"    component={SavedSearchesScreen} />
+            <Stack.Screen name="CompletedPaddles" component={CompletedPaddlesScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </WebWrapper>

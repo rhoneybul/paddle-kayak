@@ -435,6 +435,45 @@ export async function askSafety({ question, weather, routes } = {}) {
 }
 
 /**
+ * Ask a follow-up question about previously generated local knowledge.
+ * @param {Object} opts
+ * @param {string}  opts.question       — the user's question
+ * @param {Object}  opts.localKnowledge — the already-generated knowledge object
+ * @param {Object}  [opts.route]        — route context
+ * @returns {Promise<string>} plain-text answer
+ */
+export async function askLocalKnowledge({ question, localKnowledge, route } = {}) {
+  const response = await fetchWithTimeout(`${BASE_URL}/api/planning/local-knowledge/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, localKnowledge, route }),
+  }, 30_000);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error || `Ask API error ${response.status}`);
+  }
+  const { answer } = await response.json();
+  return answer;
+}
+
+/**
+ * Generate local paddling knowledge for a saved route.
+ * Returns tides, currents, wind patterns, hazards, emergency contacts etc.
+ */
+export async function generateLocalKnowledge(route) {
+  const response = await fetchWithTimeout(`${BASE_URL}/api/planning/local-knowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ route }),
+  }, 90_000);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error || `Local knowledge API error ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
  * Refine a single existing route based on free-text instructions.
  * Returns a single updated route object in the same shape.
  */

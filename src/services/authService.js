@@ -45,7 +45,7 @@ async function oAuthSignIn(provider) {
   }
 
   // Mobile: open an in-app browser, handle the deep-link callback ourselves.
-  const redirectTo = 'paddle://auth/callback';
+  const redirectTo = 'solvaa://auth/callback';
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: { redirectTo, skipBrowserRedirect: true },

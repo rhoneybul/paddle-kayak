@@ -154,7 +154,7 @@ export default function WeatherScreen({ navigation, route }) {
   );
 }
 
-const P = 12;
+const P = 16;
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   safe: { flex: 1 },
@@ -168,7 +168,7 @@ const s = StyleSheet.create({
   backText: { fontSize: 22, color: colors.good },
   navTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4 },
   cached: { fontSize: 10.5, fontWeight: '300', color: colors.textMuted },
-  scoreCard: { marginHorizontal: P, marginTop: 8, marginBottom: 9, backgroundColor: colors.white, borderRadius: 9, padding: 14, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', borderWidth: 1, borderColor: colors.borderLight, shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.07, shadowRadius: 2, elevation: 1 },
+  scoreCard: { marginHorizontal: P, marginTop: 12, marginBottom: 12, backgroundColor: colors.white, borderRadius: 9, padding: 16, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', borderWidth: 1, borderColor: colors.borderLight, shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.07, shadowRadius: 2, elevation: 1 },
   scoreNum: { fontSize: 48, fontWeight: '300', lineHeight: 50 },
   scoreLabel: { fontSize: 9, fontWeight: '400', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 },
   scoreRight: { alignItems: 'flex-end', paddingTop: 4, gap: 6 },
@@ -176,11 +176,11 @@ const s = StyleSheet.create({
   scoreBadgeText: { fontSize: 11, fontWeight: '500' },
   scoreCondition: { fontSize: 12, fontWeight: '300', color: colors.textMid },
   scoreTemp: { fontSize: 11, fontWeight: '300', color: colors.textMuted },
-  condCard: { marginHorizontal: P, marginTop: 0, marginBottom: 8, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight, shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.07, shadowRadius: 2, elevation: 1 },
-  windowRow: { marginHorizontal: P, marginBottom: 8, backgroundColor: colors.white, borderRadius: 9, padding: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: colors.borderLight },
+  condCard: { marginHorizontal: P, marginTop: 0, marginBottom: 12, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight, shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.07, shadowRadius: 2, elevation: 1 },
+  windowRow: { marginHorizontal: P, marginBottom: 12, backgroundColor: colors.white, borderRadius: 9, padding: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: colors.borderLight },
   windowText: { fontSize: 12, fontWeight: '400', color: colors.textMid },
   windowTime: { fontSize: 12, fontWeight: '500' },
-  hourlyCard: { marginHorizontal: P, marginBottom: 8, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight },
+  hourlyCard: { marginHorizontal: P, marginBottom: 12, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight },
   hourlyTitle: { paddingHorizontal: P, paddingVertical: 8, fontSize: 11, fontWeight: '500', color: colors.text, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight },
   hourlyRow: { flexDirection: 'row' },
   hourCell: { flex: 1, paddingVertical: 8, alignItems: 'center', gap: 2 },
@@ -189,7 +189,7 @@ const s = StyleSheet.create({
   hourIcon: { fontSize: 14 },
   hourWind: { fontSize: 13, fontWeight: '500' },
   hourSub: { fontSize: 8, fontWeight: '300', color: colors.textMuted },
-  dayCard: { marginHorizontal: P, marginBottom: 8, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight },
+  dayCard: { marginHorizontal: P, marginBottom: 12, backgroundColor: colors.white, borderRadius: 9, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderLight },
   dayRow: { flexDirection: 'row', alignItems: 'center', padding: 11, paddingVertical: 9 },
   dayRowBorder: { borderBottomWidth: 0.5, borderBottomColor: colors.borderLight },
   dayName: { fontSize: 13, fontWeight: '600', color: colors.text, width: 68 },

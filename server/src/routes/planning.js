@@ -311,4 +311,126 @@ If you don't have enough information to answer confidently, say so.`;
   }
 });
 
+// POST /api/planning/local-knowledge — generate local paddling knowledge for a route
+router.post('/local-knowledge', async (req, res) => {
+  try {
+    const { route } = req.body;
+
+    if (!CLAUDE_API_KEY) {
+      return res.status(500).json({ error: 'Claude API key not configured' });
+    }
+    if (!route) {
+      return res.status(400).json({ error: 'route is required' });
+    }
+
+    const systemPrompt = `You are a local coastal and waterway expert for kayakers. Given a paddle route, provide concise, practical local knowledge.
+
+Respond ONLY with a valid JSON object (no markdown, no backticks, no preamble) in this exact structure:
+{
+  "summary": "2-3 sentence overview of the area for paddlers",
+  "tides": {
+    "pattern": "Flood/ebb timing and direction",
+    "key_times": "Critical tidal windows to know",
+    "cautions": "Main tidal hazards"
+  },
+  "currents": {
+    "main_flows": "Primary current patterns",
+    "races": "Any tidal races or overfalls",
+    "cautions": "Current hazards to watch for"
+  },
+  "winds": {
+    "prevailing": "Prevailing wind direction and strength",
+    "local_effects": "Funnelling or wind-shadow areas",
+    "cautions": "Wind hazards specific to this area"
+  },
+  "waves": {
+    "typical": "Normal sea state",
+    "swell_exposure": "Swell exposure level"
+  },
+  "hazards": ["Each hazard as a short plain-language string — max 5 items"],
+  "emergency": {
+    "coastguard": "Local coastguard contact",
+    "rnli": "Nearest lifeboat station",
+    "vhf_channel": "Primary VHF channel"
+  },
+  "navigation_rules": {
+    "shipping_lanes": "Any shipping lanes, separation schemes or TSS zones that affect the route — null if none",
+    "restricted_areas": "Harbour authority limits, MOD zones, nature reserves or other access restrictions — null if none",
+    "right_of_way": "Key right-of-way rules relevant here (e.g. give way to commercial vessels, ferry crossings)",
+    "vhf_working": "VHF working channel for the area (harbour operations, marina, coastguard traffic) — null if not applicable",
+    "speed_limits": "Any speed limits or wash restrictions on this water — null if none",
+    "notices": "Any local bylaws, permits or registration requirements a paddler must know — null if none"
+  },
+  "wildlife": "Notable marine wildlife in one sentence",
+  "recommended_skills": "Minimum skills needed in one sentence"
+}`;
+
+    const coords = route.locationCoords
+      ? `${route.locationCoords.lat}, ${route.locationCoords.lng}`
+      : (Array.isArray(route.waypoints) && route.waypoints[0])
+        ? `${route.waypoints[0][0]}, ${route.waypoints[0][1]}`
+        : 'unknown';
+
+    const userMessage = `Route: ${route.name || 'Unnamed'}
+Location: ${route.location || route.launchPoint || 'unknown'}
+Coordinates: ${coords}
+Distance: ${route.distanceKm || '?'} km
+Terrain: ${route.terrain || 'coastal'}
+Launch point: ${route.launchPoint || 'unknown'}
+Description: ${route.description || ''}
+
+Generate comprehensive local knowledge for a kayaker planning this paddle.`;
+
+    const answer = await callClaudeAPI(
+      [{ role: 'user', content: userMessage }],
+      systemPrompt,
+    );
+
+    const data = extractJson(answer);
+    res.json(data);
+  } catch (error) {
+    console.error('Local knowledge error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/planning/local-knowledge/ask — ask a follow-up question about local knowledge
+router.post('/local-knowledge/ask', async (req, res) => {
+  try {
+    const { question, localKnowledge, route } = req.body;
+
+    if (!CLAUDE_API_KEY) {
+      return res.status(500).json({ error: 'Claude API key not configured' });
+    }
+    if (!question) {
+      return res.status(400).json({ error: 'question is required' });
+    }
+
+    const systemPrompt = `You are a local coastal and waterway expert for kayakers.
+You have already researched a specific paddle route and have detailed local knowledge available.
+Answer the user's question using that knowledge. Be concise and practical — 2–4 sentences maximum.
+Focus on safety-relevant details. If the question is outside your knowledge, say so honestly.`;
+
+    const routeContext = route
+      ? `Route: ${route.name || 'Unnamed'} — ${route.distanceKm || '?'} km, ${route.terrain || 'coastal'}, launch: ${route.launchPoint || 'unknown'}`
+      : '';
+
+    const knowledgeContext = localKnowledge
+      ? `\n\nLocal knowledge already gathered:\n${JSON.stringify(localKnowledge, null, 2)}`
+      : '';
+
+    const userMessage = `${routeContext}${knowledgeContext}\n\nQuestion: ${question}`;
+
+    const answer = await callClaudeAPI(
+      [{ role: 'user', content: userMessage }],
+      systemPrompt,
+    );
+
+    res.json({ answer });
+  } catch (error) {
+    console.error('Local knowledge ask error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
