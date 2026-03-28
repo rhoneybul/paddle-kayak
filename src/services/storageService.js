@@ -225,6 +225,12 @@ function normaliseServerRoute(row) {
   };
 }
 
+/** Read saved routes from local cache only (no server hit). */
+export async function getSavedRoutesLocal() {
+  const raw = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  return raw ? JSON.parse(raw) : [];
+}
+
 export async function getSavedRoutes() {
   // Try server first; fall back to local cache
   try {
@@ -242,6 +248,8 @@ export async function getSavedRoutes() {
       if (!local) return r;
       return {
         ...r,
+        // Prefer locally-drawn waypoints over server (server may not have latest draw)
+        ...(local.isDrawn ? { waypoints: local.waypoints, distanceKm: local.distanceKm, estimated_duration: local.estimated_duration, isDrawn: true } : {}),
         ...(local.localKnowledge ? { localKnowledge: local.localKnowledge } : {}),
         ...(local.lkMessages?.length ? { lkMessages: local.lkMessages } : {}),
       };
@@ -268,6 +276,7 @@ export async function saveRoute(route, customName) {
     difficulty:       route.difficulty_rating || route.difficulty || 'intermediate',
     estimated_duration: route.estimated_duration || route.durationHours || 2,
     waypoints:        route.waypoints || [],
+    isDrawn:          route.isDrawn || false,
     launchPoint:      route.launchPoint || '',
     travelFromBase:   route.travelFromBase || '',
     travelTimeMin:    route.travelTimeMin || 0,
@@ -315,12 +324,12 @@ export async function saveRoute(route, customName) {
 }
 
 /** Update only waypoints / distance / duration on an existing saved route, preserving all other fields. */
-export async function updateRouteWaypoints(id, { waypoints, distanceKm, estimated_duration }) {
+export async function updateRouteWaypoints(id, { waypoints, distanceKm, estimated_duration, isDrawn = false }) {
   const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
   const routes = cached ? JSON.parse(cached) : [];
   const idx = routes.findIndex(r => r.id === id);
   if (idx < 0) return;
-  routes[idx] = { ...routes[idx], waypoints, distanceKm, estimated_duration };
+  routes[idx] = { ...routes[idx], waypoints, distanceKm, estimated_duration, isDrawn };
   await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
 }
 

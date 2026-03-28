@@ -5,10 +5,10 @@
     "scheme": "solvaa",
     "version": "1.8.0",
     "orientation": "portrait",
-    "icon": "./assets/icons/ios/AppIcon-1024.png",
+    "icon": "./assets/icons/tortuga/ios/AppIcon-1024.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/icons/ios/AppIcon-1024.png",
+      "image": "./assets/icons/tortuga/ios/AppIcon-1024.png",
       "resizeMode": "contain",
       "backgroundColor": "#1479e8"
     },
@@ -23,7 +23,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icons/android/playstore-icon.png",
+        "foregroundImage": "./assets/icons/tortuga/android/playstore-icon.png",
         "backgroundColor": "#1479e8"
       },
       "package": "com.solvaa.app",
@@ -38,7 +38,7 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/icons/web/favicon-32x32.png",
+      "favicon": "./assets/icons/tortuga/web/favicon-32x32.png",
       "name": "Solvaa",
       "shortName": "Solvaa",
       "description": "Know the water before you go — AI-powered kayak trip planning",

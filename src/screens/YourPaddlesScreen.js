@@ -170,7 +170,7 @@ export default function YourPaddlesScreen({ navigation }) {
 
         {loading ? (
           <View style={s.centered}>
-            <Image source={require('../../assets/icons/ios/AppIcon-1024.png')} style={s.loadingIcon} />
+            <Image source={require('../../assets/icons/tortuga/ios/AppIcon-1024.png')} style={s.loadingIcon} />
             <ActivityIndicator color={colors.primary} style={{ marginTop: 16 }} />
             <Text style={s.loadingText}>Loading activities…</Text>
           </View>

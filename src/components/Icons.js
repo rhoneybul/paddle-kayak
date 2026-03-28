@@ -89,3 +89,13 @@ export const SearchIcon = icon((p) => (
     <Line {...p} x1="15.5" y1="15.5" x2="21" y2="21" />
   </>
 ));
+
+export const CrosshairIcon = icon((p) => (
+  <>
+    <Circle {...p} cx="12" cy="12" r="4" />
+    <Line {...p} x1="12" y1="2" x2="12" y2="6" />
+    <Line {...p} x1="12" y1="18" x2="12" y2="22" />
+    <Line {...p} x1="2" y1="12" x2="6" y2="12" />
+    <Line {...p} x1="18" y1="12" x2="22" y2="12" />
+  </>
+));

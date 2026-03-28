@@ -348,7 +348,7 @@ const s = StyleSheet.create({
   nav: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8, paddingTop: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border },
   back: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.good },
-  navTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4 },
+  navTitle: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text, marginLeft: 4 },
   navRight: { fontSize: 10.5, fontWeight: '300', color: colors.textMuted },
   homeBtn:     { paddingHorizontal: 8, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' },
   sheet: { flex: 1 },

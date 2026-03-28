@@ -340,8 +340,8 @@ export default function ConditionsTimeline({ hourly = [], date, startHour, endHo
 }
 
 const s = StyleSheet.create({
-  wrap:    { marginHorizontal: 12, marginBottom: 8, backgroundColor: colors.white, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, paddingBottom: 8 },
-  header:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  wrap:    { marginHorizontal: 12, marginBottom: 8, backgroundColor: colors.white, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 20, paddingBottom: 16 },
+  header:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   title:   { fontSize: 10, fontWeight: '600', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5 },
   bearingNote: { fontSize: 9, fontWeight: '300', color: colors.textMuted },
 

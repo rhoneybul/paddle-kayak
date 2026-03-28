@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView, RefreshControl, Platform, ActivityIndicator, Linking, Image, Animated, useWindowDimensions,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView, RefreshControl, Platform, ActivityIndicator, Image, Animated, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../theme';
-import { getSavedRoutes, deleteSavedRoute, saveRoute, updateRouteWaypoints, updateRouteLocalKnowledge, updateRouteLkMessages } from '../services/storageService';
+import { getSavedRoutes, getSavedRoutesLocal, deleteSavedRoute, saveRoute, updateRouteWaypoints, updateRouteLocalKnowledge, updateRouteLkMessages } from '../services/storageService';
 import { getWeatherWithCache } from '../services/weatherService';
 import { fetchTides, buildTideHeightMap, buildTideExtremeMap } from '../services/tideService';
 import { generateLocalKnowledge, askLocalKnowledge } from '../services/claudeService';
-import { fetchRoutePhotos } from '../services/photoService';
+import { fetchWaypointPhotos } from '../services/photoService';
+import api from '../services/api';
 import PaddleMap from '../components/PaddleMap';
 import ConditionsTimeline from '../components/ConditionsTimeline';
 import { gpxRouteBearing } from '../components/PaddleMap';
@@ -76,8 +77,9 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
   const [lkMessages, setLkMessages]         = useState([]);
   const [lkQuestion, setLkQuestion]         = useState('');
   const [lkAsking, setLkAsking]             = useState(false);
-  const [photos, setPhotos]                 = useState([]);
+  const [waypointPhotos, setWaypointPhotos] = useState([]); // [{ label, photos }]
   const [photosLoading, setPhotosLoading]   = useState(false);
+  const [campsites, setCampsites]           = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,18 +140,28 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
     return () => { cancelled = true; };
   }, [selected?.id, weather?.utcOffsetSeconds]);
 
-  // Fetch nearby location photos when selected route changes
+  // Fetch per-waypoint photos + campsites when selected route changes
   useEffect(() => {
-    if (!selected) { setPhotos([]); return; }
+    if (!selected) { setWaypointPhotos([]); setCampsites([]); return; }
     let cancelled = false;
+
+    // Photos per waypoint
     (async () => {
       setPhotosLoading(true);
       try {
-        const pics = await fetchRoutePhotos(selected);
-        if (!cancelled) setPhotos(pics);
-      } catch { if (!cancelled) setPhotos([]); }
+        const groups = await fetchWaypointPhotos(selected);
+        if (!cancelled) setWaypointPhotos(groups);
+      } catch { if (!cancelled) setWaypointPhotos([]); }
       finally  { if (!cancelled) setPhotosLoading(false); }
     })();
+
+    // Campsites near route
+    if (selected.locationCoords) {
+      api.campsites.search(selected.locationCoords.lat, selected.locationCoords.lng, 30)
+        .then(data => { if (!cancelled) setCampsites(data || []); })
+        .catch(() => {});
+    }
+
     return () => { cancelled = true; };
   }, [selected?.id]);
 
@@ -189,14 +201,24 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
       const waypoints = drawnPoints.map(p => [p.lat, p.lon]);
       const distanceKm = parseFloat(drawnDistKm.toFixed(1));
       const estimated_duration = parseFloat(drawnTimeHrs.toFixed(1));
-      await updateRouteWaypoints(selected.id, { waypoints, distanceKm, estimated_duration });
-      const fresh = await getSavedRoutes();
-      setRoutes(fresh);
-      setSelected(fresh.find(r => r.id === selected.id) || { ...selected, waypoints, distanceKm, estimated_duration });
+      const updated = { ...selected, waypoints, distanceKm, estimated_duration, isDrawn: true };
+
+      if (isUnsaved) {
+        await saveRoute(updated, updated.name);
+        setIsUnsaved(false);
+      } else {
+        await updateRouteWaypoints(selected.id, { waypoints, distanceKm, estimated_duration, isDrawn: true });
+      }
+
+      // Update selected immediately with in-memory data — don't wait on cache read
+      setSelected(updated);
       setDrawnPoints([]);
       setDrawMode(false);
-    } catch {
-      Alert.alert('Error', 'Could not save edited route — please try again.');
+      // Refresh route list in background
+      getSavedRoutesLocal().then(fresh => setRoutes(fresh)).catch(() => {});
+    } catch (err) {
+      console.error('[handleFinishDraw]', err);
+      Alert.alert('Error', `Could not save: ${err?.message || err}`);
     }
   };
 
@@ -214,7 +236,7 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
     setEditingName(false);
   };
 
-  // Load saved local knowledge when switching routes
+  // Load saved local knowledge + auto-enter draw mode for undrawn routes
   useEffect(() => {
     const saved = selected?.localKnowledge || null;
     setLocalKnowledge(saved);
@@ -223,27 +245,11 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
     setLkQuestion('');
     setMapExpanded(false);
     Animated.timing(mapHeightAnim, { toValue: 280, duration: 0, useNativeDriver: false }).start();
+
+    setDrawnPoints([]);
+    setDrawMode(false);
   }, [selected?.id]);
 
-  const handleNavigateToStart = () => {
-    // Prefer first waypoint coordinates, fall back to launch point name
-    const firstWaypoint = Array.isArray(selected.waypoints) && selected.waypoints[0];
-    let destination;
-    if (firstWaypoint) {
-      const lat = Array.isArray(firstWaypoint) ? firstWaypoint[0] : firstWaypoint.lat;
-      const lon = Array.isArray(firstWaypoint) ? firstWaypoint[1] : firstWaypoint.lon;
-      destination = `${lat},${lon}`;
-    } else if (selected.launchPoint) {
-      destination = encodeURIComponent(selected.launchPoint);
-    } else {
-      Alert.alert('No location', 'This route has no launch point set.');
-      return;
-    }
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Error', 'Could not open Google Maps.')
-    );
-  };
 
   const handleGenerateKnowledge = async () => {
     if (!selected || genKnowledge) return;
@@ -317,7 +323,7 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
         <SafeAreaView style={s.safe}>
           {/* Nav */}
           <View style={s.nav}>
-            <TouchableOpacity onPress={() => setSelected(null)} style={s.back}>
+            <TouchableOpacity onPress={() => previewRoute ? navigation.goBack() : setSelected(null)} style={s.back}>
               <Text style={s.backText}>‹</Text>
             </TouchableOpacity>
             {editingName && !isUnsaved ? (
@@ -340,7 +346,7 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                 activeOpacity={0.7}
               >
                 <Text style={s.navTitle} numberOfLines={1}>{selected.name}</Text>
-                <PencilIcon size={12} color={colors.textMuted} />
+                <PencilIcon size={14} color={colors.textMuted} />
               </TouchableOpacity>
             )}
             {!isUnsaved && (
@@ -370,7 +376,16 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               tideHeightMap={tideHeightMap}
               tideExtremeMap={tideExtremeMap}
               simpleRoute
+              campsites={campsites}
             />
+            {drawMode && drawnPoints.length > 0 && (
+              <View style={s.drawStatsOverlay} pointerEvents="none">
+                <Text style={s.drawStatsText}>
+                  {drawnDistKm.toFixed(1)} km{'  ·  '}
+                  {drawnTimeHrs < 1 ? `~${Math.round(drawnTimeHrs * 60)} min` : `~${drawnTimeHrs.toFixed(1)} h`}
+                </Text>
+              </View>
+            )}
           </Animated.View>
 
           {/* Draw / edit controls */}
@@ -393,40 +408,27 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                 <Text style={s.mapExpandBtnText}>{mapExpanded ? '↑ Map' : '↓ Map'}</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity
-              style={[s.drawToggle, drawMode && s.drawToggleActive]}
-              onPress={() => {
-                if (!drawMode) {
-                  const pts = (selected.waypoints || [])
+            {!drawMode ? (
+              <TouchableOpacity
+                style={s.drawToggle}
+                onPress={() => {
+                  const raw = Array.isArray(selected.waypoints) ? selected.waypoints : [];
+                  const pts = raw
                     .map(w => Array.isArray(w) ? { lat: w[0], lon: w[1] } : w)
                     .filter(p => p?.lat != null && p?.lon != null);
                   setDrawnPoints(pts);
-                } else {
-                  setDrawnPoints([]);
-                }
-                setDrawMode(d => !d);
-              }}
-              activeOpacity={0.85}
-            >
-              <Text style={[s.drawToggleText, drawMode && s.drawToggleTextActive]}>
-                {drawMode ? 'Drawing…' : 'Edit route'}
-              </Text>
-            </TouchableOpacity>
-
-            {drawMode && (
+                  setDrawMode(true);
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={s.drawToggleText}>
+                  {selected.isDrawn ? 'Edit route' : 'Draw route'}
+                </Text>
+              </TouchableOpacity>
+            ) : (
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {drawnPoints.length > 0 && (
                   <>
-                    <View style={s.drawStat}>
-                      <Text style={s.drawStatVal}>{drawnDistKm.toFixed(1)} km</Text>
-                      <Text style={s.drawStatLabel}>distance</Text>
-                    </View>
-                    <View style={s.drawStat}>
-                      <Text style={s.drawStatVal}>
-                        {drawnTimeHrs < 1 ? `${Math.round(drawnTimeHrs * 60)} min` : `${drawnTimeHrs.toFixed(1)} h`}
-                      </Text>
-                      <Text style={s.drawStatLabel}>~time</Text>
-                    </View>
                     <TouchableOpacity style={s.drawAction} onPress={() => setDrawnPoints(p => p.slice(0, -1))} activeOpacity={0.7}>
                       <Text style={s.drawActionText}>Undo</Text>
                     </TouchableOpacity>
@@ -438,13 +440,16 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                 <TouchableOpacity style={s.drawClear} onPress={() => setDrawnPoints([])} activeOpacity={0.7}>
                   <Text style={s.drawClearText}>Clear all</Text>
                 </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity style={s.drawAction} onPress={() => { setDrawnPoints([]); setDrawMode(false); }} activeOpacity={0.7}>
+                  <Text style={s.drawActionText}>Cancel</Text>
+                </TouchableOpacity>
+                {drawnPoints.length >= 2 && (
+                  <TouchableOpacity style={s.drawFinish} onPress={handleFinishDraw} activeOpacity={0.85}>
+                    <Text style={s.drawFinishText}>Finish</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            )}
-
-            {drawMode && drawnPoints.length >= 2 && (
-              <TouchableOpacity style={s.drawFinish} onPress={handleFinishDraw} activeOpacity={0.85}>
-                <Text style={s.drawFinishText}>Finish</Text>
-              </TouchableOpacity>
             )}
           </View>
 
@@ -456,43 +461,47 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                 ['Distance', selected.distanceKm ? `${selected.distanceKm} km` : '—'],
                 ['Duration', `~${selected.estimated_duration}h`],
                 ['Terrain',  selected.terrain  || '—'],
-                ['Level',    selected.difficulty || '—'],
               ].map(([l, v], i) => (
-                <View key={l} style={[s.metaCell, i < 3 && s.metaCellBorder]}>
+                <View key={l} style={[s.metaCell, s.metaCellBorder]}>
                   <Text style={s.metaCellLabel}>{l}</Text>
                   <Text style={s.metaCellValue}>{v}</Text>
                 </View>
               ))}
+              {/* Risk flag cell */}
+              {(() => {
+                const hazards = localKnowledge?.hazards;
+                const highDiff = selected.difficulty === 'advanced' || selected.difficulty === 'expert';
+                const hasRisk = (hazards && hazards.length > 0) || highDiff;
+                return (
+                  <View style={s.metaCell}>
+                    <Text style={s.metaCellLabel}>Risks</Text>
+                    <Text style={[s.metaCellValue, hasRisk ? s.metaCellRisk : s.metaCellSafe]}>
+                      {hasRisk ? '⚑ Flagged' : 'None'}
+                    </Text>
+                  </View>
+                );
+              })()}
             </View>
 
-            {/* Photo strip */}
-            {(photosLoading || photos.length > 0) && (
-              <View style={s.photoSection}>
-                <Text style={s.sectionLabel}>PHOTOS</Text>
-                {photosLoading ? (
-                  <View style={s.photoLoading}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                  </View>
-                ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={s.photoStrip}
-                  >
-                    {photos.map((photo, i) => (
-                      <View key={i} style={s.photoCard}>
-                        <Image
-                          source={{ uri: photo.url }}
-                          style={s.photoImage}
-                          resizeMode="cover"
-                        />
-                        <Text style={s.photoCaption} numberOfLines={2}>{photo.title}</Text>
-                      </View>
-                    ))}
-                  </ScrollView>
-                )}
+            {/* Per-waypoint photos */}
+            {photosLoading && (
+              <View style={s.photoLoading}>
+                <ActivityIndicator size="small" color={colors.primary} />
               </View>
             )}
+            {waypointPhotos.map((group, gi) => (
+              <View key={gi} style={s.photoSection}>
+                <Text style={s.sectionLabel}>{group.label.toUpperCase()}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.photoStrip}>
+                  {group.photos.map((photo, i) => (
+                    <View key={i} style={s.photoCard}>
+                      <Image source={{ uri: photo.url }} style={s.photoImage} resizeMode="cover" />
+                      <Text style={s.photoCaption} numberOfLines={2}>{photo.title}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            ))}
 
             {/* Save route (only shown for unsaved previews) */}
             {isUnsaved && (
@@ -514,14 +523,6 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               <View style={s.gpxBadge}>
                 <Text style={s.gpxBadgeText}>GPX saved to cloud</Text>
               </View>
-            )}
-
-            {/* Navigate to start */}
-            {(selected.launchPoint || (Array.isArray(selected.waypoints) && selected.waypoints.length > 0)) && (
-              <TouchableOpacity style={s.navToStartBtn} onPress={handleNavigateToStart} activeOpacity={0.85}>
-                <Text style={s.navToStartText}>Navigate to start</Text>
-                {selected.launchPoint ? <Text style={s.navToStartSub}>{selected.launchPoint}</Text> : null}
-              </TouchableOpacity>
             )}
 
             {/* Local Knowledge */}
@@ -870,9 +871,9 @@ const s = StyleSheet.create({
   nav:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: P, paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: colors.border },
   back:          { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   backText:      { fontSize: 22, color: colors.primary },
-  navTitle:      { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4 },
+  navTitle:      { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text, marginLeft: 4 },
   navTitleBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 4 },
-  navTitleInput: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4, paddingVertical: 2, paddingHorizontal: 4, borderBottomWidth: 1.5, borderBottomColor: colors.primary },
+  navTitleInput: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text, marginLeft: 4, paddingVertical: 2, paddingHorizontal: 4, borderBottomWidth: 1.5, borderBottomColor: colors.primary },
   goBtn:         { marginHorizontal: 14, marginBottom: 10, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   goBtnText:     { fontSize: 15, fontWeight: '600', color: '#fff' },
   deleteBtn:     { paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
@@ -904,13 +905,11 @@ const s = StyleSheet.create({
   metaCellBorder: { borderRightWidth: 0.5, borderRightColor: colors.borderLight },
   metaCellLabel:  { fontSize: 8, fontWeight: '400', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 },
   metaCellValue:  { fontSize: 11, fontWeight: '500', color: colors.text, textTransform: 'capitalize' },
+  metaCellRisk:   { color: colors.warn },
+  metaCellSafe:   { color: colors.primary },
 
   gpxBadge:       { marginHorizontal: P, marginBottom: 6, flexDirection: 'row', alignItems: 'center' },
   gpxBadgeText:   { fontSize: 10, fontWeight: '500', color: colors.primary },
-
-  navToStartBtn:  { marginHorizontal: P, marginTop: 4, marginBottom: 8, backgroundColor: colors.primary, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
-  navToStartText: { fontSize: 13, fontWeight: '600', color: '#fff' },
-  navToStartSub:  { fontSize: 11, fontWeight: '300', color: 'rgba(255,255,255,0.75)', marginTop: 2 },
 
   sectionLabel:   { fontSize: 9, fontWeight: '600', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginHorizontal: P, marginBottom: 6, marginTop: 4 },
 
@@ -950,6 +949,8 @@ const s = StyleSheet.create({
   drawToggleActive:   { backgroundColor: colors.primary },
   drawToggleText:     { fontSize: 11, fontWeight: '500', color: colors.primary },
   drawToggleTextActive:{ color: '#fff' },
+  drawStatsOverlay:   { position: 'absolute', top: 10, left: 0, right: 0, alignItems: 'center' },
+  drawStatsText:      { backgroundColor: 'rgba(0,0,0,0.45)', color: '#fff', fontSize: 12, fontWeight: '600', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20, overflow: 'hidden', letterSpacing: 0.2 },
   drawStat:           { alignItems: 'center', paddingHorizontal: 4 },
   drawStatVal:        { fontSize: 12, fontWeight: '600', color: colors.text },
   drawStatLabel:      { fontSize: 9, fontWeight: '400', color: colors.textMuted },

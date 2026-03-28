@@ -102,17 +102,6 @@ export default function SignInScreen({ navigation }) {
             <Text style={s.btnTextLight}>{loading ? 'Signing in…' : 'Continue with Google'}</Text>
           </TouchableOpacity>
 
-          {/* Divider */}
-          <View style={s.orRow}>
-            <View style={s.orLine} />
-            <Text style={s.orText}>or</Text>
-            <View style={s.orLine} />
-          </View>
-
-          <TouchableOpacity style={s.btnGhost} onPress={() => navigation.replace('Home')} activeOpacity={0.7}>
-            <Text style={s.btnTextGhost}>Continue as guest</Text>
-          </TouchableOpacity>
-
           <Text style={s.terms}>
             By continuing you agree to our{'\n'}
             <Text style={s.termsLink}>Terms of Service</Text> and <Text style={s.termsLink}>Privacy Policy</Text>
@@ -140,13 +129,8 @@ const s = StyleSheet.create({
   tagline: { fontSize: 12, fontWeight: '300', color: colors.textMuted, marginBottom: 36 },
   divider: { width: 32, height: 1, backgroundColor: colors.border, marginBottom: 32 },
   btnLight: { width: '100%', backgroundColor: colors.white, borderRadius: 10, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 10, borderWidth: 1, borderColor: colors.border },
-  btnGhost: { width: '100%', borderRadius: 10, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
   btnLogo: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   btnTextLight: { flex: 1, textAlign: 'center', fontSize: 13.5, fontWeight: '400', color: colors.text },
-  btnTextGhost: { fontSize: 13.5, fontWeight: '400', color: colors.textMid },
-  orRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 6, width: '100%' },
-  orLine: { flex: 1, height: 0.5, backgroundColor: colors.border },
-  orText: { fontSize: 10, fontWeight: '300', color: colors.textFaint },
   terms: { fontSize: 10, fontWeight: '300', color: colors.textFaint, textAlign: 'center', marginTop: 18, lineHeight: 16 },
   termsLink: { color: '#7a9a8a' },
   errorText: { fontSize: 11, color: '#8a4a3a', textAlign: 'center', marginBottom: 8 },

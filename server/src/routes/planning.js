@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../lib/supabase');
+const { refineRouteWaypoints } = require('../lib/waterRouting');
 
 // Claude API service — moved from frontend to avoid CORS
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || '';
@@ -41,11 +42,6 @@ async function uploadRouteGpx(name, waypoints, idx) {
   }
 }
 
-/** Default request timeout in ms (30 seconds). */
-const REQUEST_TIMEOUT_MS = 30000;
-
-/** Maximum number of retries on timeout or malformed JSON. */
-const MAX_RETRIES = 2;
 
 // ── Skill-level description block used inside the system prompt ──────────────
 const SKILL_LEVELS = {
@@ -111,22 +107,24 @@ For each route, provide:
 
 Use the skill level context provided in the user prompt to ensure routes are appropriate.
 
-WAYPOINT RULES — READ CAREFULLY:
-- Every waypoint coordinate MUST be on open navigable water. Zero exceptions.
-- Never place a point on land, beach, rock, cliff, building, road, or any non-water surface.
-- Check each point: if a map showed this coordinate, would it be in the sea/river/lake? If not, move it.
-- First point = launch site on the water's edge. Last point = take-out on the water's edge.
-- Intermediate points: only at significant navigation turns, in the water, never on land.
+WAYPOINT RULES — NON-NEGOTIABLE:
+- Every single coordinate MUST be placed in open, navigable water. No exceptions whatsoever.
+- NEVER place a point on land, beach, sand, rocks, cliffs, buildings, roads, or any surface a kayaker cannot paddle on.
+- Coastal routes: place waypoints 100–300 m offshore from headlands, beaches, and cliffs — not touching the shore.
+- River routes: place waypoints in the centre of the river channel, away from banks.
+- Lake routes: place waypoints at least 50 m from the shoreline.
+- Harbours / estuaries: stay in the navigable channel; avoid mud flats and shallow margins.
+- First point = the water immediately adjacent to the launch slip. Last point = the water immediately adjacent to the take-out.
+- Intermediate points: only where the route must change direction, placed firmly in open water.
+
+SELF-CHECK (mandatory before returning JSON):
+For every coordinate you generate, ask yourself: "If I plotted this on Google Maps satellite view, would I see open water?" If the answer is no or uncertain, move the point further offshore/into the water until the answer is yes.
 
 Always prioritize safety and realistic planning.`;
 
 async function callClaudeAPI(messages, systemPrompt) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 110_000); // 110s — under client's 120s
-
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    signal: controller.signal,
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': CLAUDE_API_KEY,
@@ -134,12 +132,11 @@ async function callClaudeAPI(messages, systemPrompt) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 16384,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: messages,
     }),
   });
-  clearTimeout(timer);
 
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
@@ -234,11 +231,12 @@ router.post('/', async (req, res) => {
       );
       const plan = extractJson(responseText);
 
-      // Upload a GPX file to Supabase storage for each route (best-effort, in parallel)
+      // Refine waypoints to navigable water, then upload GPX (both best-effort, in parallel)
       if (Array.isArray(plan.routes)) {
         await Promise.all(plan.routes.map(async (route, i) => {
           if (Array.isArray(route.waypoints) && route.waypoints.length > 0) {
-            route.gpx_url = await uploadRouteGpx(route.name, route.waypoints, i);
+            route.waypoints = refineRouteWaypoints(route.waypoints);
+            route.gpx_url   = await uploadRouteGpx(route.name, route.waypoints, i);
           }
         }));
       }
@@ -263,6 +261,14 @@ router.post('/', async (req, res) => {
 
     const responseText = await callClaudeAPI(messages, SYSTEM_PROMPT_THREE_ROUTES);
     const result = parseRoutesResponse(responseText);
+
+    if (Array.isArray(result.routes)) {
+      result.routes.forEach(route => {
+        if (Array.isArray(route.waypoints) && route.waypoints.length > 0) {
+          route.waypoints = refineRouteWaypoints(route.waypoints);
+        }
+      });
+    }
 
     res.json(result);
   } catch (error) {
@@ -429,6 +435,114 @@ Focus on safety-relevant details. If the question is outside your knowledge, say
     res.json({ answer });
   } catch (error) {
     console.error('Local knowledge ask error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/planning/photos — ask Claude for relevant Wikipedia articles then fetch their thumbnails
+router.post('/photos', async (req, res) => {
+  try {
+    const { route } = req.body;
+    if (!route) return res.status(400).json({ error: 'route is required' });
+
+    // Extract sampled waypoint coordinates from the route
+    const rawWaypoints = Array.isArray(route.waypoints) ? route.waypoints : [];
+    const wpts = rawWaypoints
+      .map(w => (Array.isArray(w) ? { lat: w[0], lon: w[1] } : w))
+      .filter(w => w?.lat != null && w?.lon != null);
+
+    // Sample start, mid, end — or fall back to locationCoords
+    const sampleCoords = [];
+    if (wpts.length >= 2) {
+      const first = wpts[0];
+      const mid   = wpts[Math.floor(wpts.length / 2)];
+      const last  = wpts[wpts.length - 1];
+      for (const pt of [first, mid, last]) {
+        if (!sampleCoords.find(c => c.lat === pt.lat && c.lon === pt.lon)) {
+          sampleCoords.push(pt);
+        }
+      }
+    } else if (wpts.length === 1) {
+      sampleCoords.push(wpts[0]);
+    } else if (route.locationCoords?.lat) {
+      sampleCoords.push({
+        lat: route.locationCoords.lat,
+        lon: route.locationCoords.lng ?? route.locationCoords.lon,
+      });
+    }
+
+    const coordList = sampleCoords
+      .map((c, i) => {
+        const label = i === 0 ? 'launch' : i === sampleCoords.length - 1 ? 'finish' : 'midpoint';
+        return `  - ${label}: ${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}`;
+      })
+      .join('\n');
+
+    let articleTitles = [];
+
+    if (CLAUDE_API_KEY) {
+      const systemPrompt = `You are a geography assistant. Given exact GPS coordinates along a kayak route, suggest exactly 3 Wikipedia article titles for places that lie directly on or immediately alongside those coordinates.
+
+Rules:
+- Strongly prefer water-focused articles: bays, lochs, estuaries, sea channels, straits, headlands, islands, beaches, nature reserves on the water — anything whose Wikipedia lead photo shows open water, coastline, or the water body itself
+- Avoid articles whose lead photo is likely to be a town centre, building, road, or inland landscape with no water visible
+- Each article must correspond to somewhere the paddler would actually pass through or see from the water
+- Use the coordinates to identify the specific geography — do not suggest places far from the given points
+- Articles must exist on Wikipedia and be likely to have a lead photograph
+- Spread suggestions across the route (one near launch, one near midpoint, one near finish) where possible
+
+Respond ONLY with a valid JSON array of 3 strings — article titles exactly as they appear on Wikipedia. No preamble, no markdown.
+Example: ["Sound of Mull", "Lismore, Argyll", "Lynn of Lorn"]`;
+
+      const userMessage = `Route name: ${route.name || 'Unnamed'}\nTerrain: ${route.terrain || 'coastal'}\nWaypoint coordinates:\n${coordList || '  (none provided)'}`;
+
+      try {
+        const answer = await callClaudeAPI(
+          [{ role: 'user', content: userMessage }],
+          systemPrompt,
+        );
+        const parsed = JSON.parse(answer.replace(/```json?|```/g, '').trim());
+        if (Array.isArray(parsed)) articleTitles = parsed.slice(0, 3);
+      } catch (e) {
+        console.warn('[photos] Claude parse failed:', e.message);
+      }
+    }
+
+    // Fallback: use route name + location as search terms
+    if (articleTitles.length === 0) {
+      articleTitles = [route.name, route.launchPoint, route.terrain].filter(Boolean).slice(0, 3);
+    }
+
+    // Fetch Wikipedia thumbnails for each article title
+    const WIKI = 'https://en.wikipedia.org/w/api.php';
+    const photos = [];
+    await Promise.all(
+      articleTitles.map(async (title) => {
+        try {
+          const params = new URLSearchParams({
+            action: 'query',
+            titles: title,
+            prop: 'pageimages',
+            piprop: 'thumbnail',
+            pithumbsize: '600',
+            format: 'json',
+            origin: '*',
+          });
+          const r = await fetch(`${WIKI}?${params}`);
+          if (!r.ok) return;
+          const data = await r.json();
+          const pages = data?.query?.pages || {};
+          const page = Object.values(pages)[0];
+          if (page?.thumbnail?.source) {
+            photos.push({ url: page.thumbnail.source, title: page.title.replace(/_/g, ' ') });
+          }
+        } catch { /* skip */ }
+      })
+    );
+
+    res.json({ photos });
+  } catch (error) {
+    console.error('Photos error:', error);
     res.status(500).json({ error: error.message });
   }
 });

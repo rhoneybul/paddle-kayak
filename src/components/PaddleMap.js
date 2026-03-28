@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import MapView, { Polyline, Marker, Callout } from 'react-native-maps';
 import { colors } from '../theme';
+import { CrosshairIcon } from './Icons';
 
 export function parseGpx(gpx) {
   if (!gpx) return [];
@@ -121,6 +122,7 @@ export default function PaddleMap({
   simpleRoute = false,
   liveTrack = [],
   staticView = false,
+  campsites = [],
 }) {
   const mapRef = useRef(null);
   const [searchVisible, setSearchVisible] = useState(false);
@@ -193,10 +195,13 @@ export default function PaddleMap({
   const midPoint = selRaw.length >= 2 ? selRaw[Math.floor(selRaw.length / 2)] : null;
 
   const fitToRoute = () => {
-    const pts = fitPoints.flat();
+    const routePts = fitPoints.flat();
+    const drawnCoords = drawnPoints.map(p => ({ latitude: p.lat, longitude: p.lon }));
+    const allPts = [...routePts, ...drawnCoords];
+    const pts = allPts.length > 0 ? allPts : routePts;
     if (pts.length > 0 && mapRef.current) {
       mapRef.current.fitToCoordinates(pts, {
-        edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
+        edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
         animated: true,
       });
     }
@@ -263,6 +268,15 @@ export default function PaddleMap({
           );
         })}
 
+        {/* Selected route — polyline */}
+        {selectedRoute && selectedRoute.points.length >= 2 && (
+          <Polyline
+            coordinates={selectedRoute.points}
+            strokeColor={selectedRoute.color}
+            strokeWidth={3}
+          />
+        )}
+
         {/* Selected route — key waypoint markers (skipped for drawn/simple routes) */}
         {(() => {
           const route = routes[selectedIdx];
@@ -318,6 +332,18 @@ export default function PaddleMap({
           </Marker>
         )}
 
+        {/* Campsites */}
+        {campsites.map((c, i) => (
+          <Marker key={`cs${i}`} coordinate={{ latitude: c.lat, longitude: c.lon }} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.campsiteDot} />
+            <Callout>
+              <View style={styles.landmarkCallout}>
+                <Text style={styles.landmarkCalloutText}>{c.name}</Text>
+              </View>
+            </Callout>
+          </Marker>
+        ))}
+
         {/* Landmark search results */}
         {landmarks.map((lm, i) => (
           <Marker key={`lm${i}`} coordinate={{ latitude: lm.lat, longitude: lm.lon }}>
@@ -369,7 +395,7 @@ export default function PaddleMap({
 
       {/* Center / fit button */}
       <TouchableOpacity style={styles.centerBtn} onPress={fitToRoute} activeOpacity={0.75}>
-        <Text style={styles.centerBtnText}>⊙</Text>
+        <CrosshairIcon size={18} color={colors.primary} strokeWidth={2} />
       </TouchableOpacity>
     </View>
   );
@@ -394,8 +420,8 @@ const styles = StyleSheet.create({
   kpDotLarge: { width: 12, height: 12, borderRadius: 6 },
   kpDotStart: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#1d4ed8', borderWidth: 2, borderColor: '#fff' },
   kpDotDrawn: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', borderWidth: 2, borderColor: '#1d4ed8' },
-  centerBtn:  { position: 'absolute', bottom: 12, right: 12, width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.93)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.12)' },
-  centerBtnText: { fontSize: 16, color: colors.primary, lineHeight: 18 },
+  centerBtn:  { position: 'absolute', bottom: 12, right: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.15)', shadowColor: '#000', shadowOpacity: 0.12, shadowOffset: { width: 0, height: 1 }, shadowRadius: 3, elevation: 3 },
+  centerBtnText: { fontSize: 18, color: colors.primary, lineHeight: 20 }, // unused — kept for safety
   // Live track
   liveDot:    { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.good, borderWidth: 2.5, borderColor: '#fff' },
   // Landmark search
@@ -407,6 +433,7 @@ const styles = StyleSheet.create({
   searchGoBtnText: { fontSize: 11, fontWeight: '600', color: colors.primary },
   searchCloseBtn:  { paddingHorizontal: 6, paddingVertical: 4 },
   searchCloseBtnText: { fontSize: 12, color: colors.textMuted },
+  campsiteDot:     { width: 10, height: 10, borderRadius: 5, backgroundColor: '#8a6a2a', borderWidth: 2, borderColor: '#fff' },
   landmarkDot:     { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.caution, borderWidth: 2, borderColor: '#fff' },
   landmarkCallout: { padding: 6, maxWidth: 160 },
   landmarkCalloutText: { fontSize: 11, color: colors.text },

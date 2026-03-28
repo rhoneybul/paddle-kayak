@@ -800,7 +800,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
   if (loading) {
     return (
       <View style={[s.container, s.centered]}>
-        <Image source={require('../../assets/icons/ios/AppIcon-1024.png')} style={s.logoBadge} />
+        <Image source={require('../../assets/icons/tortuga/ios/AppIcon-1024.png')} style={s.logoBadge} />
         <Text style={s.loadTitle}>Planning your paddle{'\u2026'}</Text>
         <Text style={s.loadPrompt} numberOfLines={2}>
           {`${destination} · ${minDurationHrs}–${maxDurationHrs}h paddle`}
@@ -922,16 +922,6 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
               </Text>
             </View>
           )}
-          {/* Expand / collapse toggle */}
-          {!drawMode && (
-            <TouchableOpacity
-              style={s.mapExpandBtn}
-              onPress={() => setMapExpanded(e => !e)}
-              activeOpacity={0.75}
-            >
-              <Text style={s.mapExpandBtnText}>{mapExpanded ? '⌃' : '⌄'}</Text>
-            </TouchableOpacity>
-          )}
         </Animated.View>
 
         {/* Draw controls */}
@@ -946,6 +936,16 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
               <Text style={s.drawCtaArrow}>›</Text>
             </TouchableOpacity>
           ) : (
+            <>
+              {!drawMode && (
+                <TouchableOpacity
+                  style={s.mapExpandBtn}
+                  onPress={() => setMapExpanded(e => !e)}
+                  activeOpacity={0.75}
+                >
+                  <Text style={s.mapExpandBtnText}>{mapExpanded ? '↑ Map' : '↓ Map'}</Text>
+                </TouchableOpacity>
+              )}
             <TouchableOpacity
               style={[s.drawToggle, drawMode && s.drawClearBtn]}
               onPress={() => {
@@ -969,6 +969,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
                 {drawMode ? 'Clear' : 'Draw route'}
               </Text>
             </TouchableOpacity>
+            </>
           )}
 
           {drawMode && (
@@ -1130,11 +1131,16 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
                         ].filter(Boolean).join('  ·  ')}
                       </Text>
                     </View>
-                    <HeartIcon
-                      filled={isRouteFavorited(r.name)}
-                      size={20}
+                    <TouchableOpacity
+                      style={[s.saveRouteBtn, isRouteFavorited(r.name) && s.saveRouteBtnSaved]}
                       onPress={() => handleToggleFavorite({ ...r, location: plan.location?.base || destination, locationCoords })}
-                    />
+                      activeOpacity={0.75}
+                    >
+                      <HeartIcon filled={isRouteFavorited(r.name)} size={14} color={isRouteFavorited(r.name) ? '#fff' : colors.primary} />
+                      <Text style={[s.saveRouteBtnText, isRouteFavorited(r.name) && s.saveRouteBtnTextSaved]}>
+                        {isRouteFavorited(r.name) ? 'Saved' : 'Save'}
+                      </Text>
+                    </TouchableOpacity>
                     {/* spacer for the absolute delete button */}
                     <View style={{ width: 28 }} />
                   </View>
@@ -1405,10 +1411,14 @@ const s = StyleSheet.create({
   nav:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: P, paddingBottom: 8, paddingTop: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border },
   back:       { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   backText:   { fontSize: 22, color: colors.primary },
-  navTitle:      { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4 },
+  navTitle:      { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text, marginLeft: 4 },
   navTitleBtn:   { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 4 },
   navTitlePencil:{ fontSize: 13, color: colors.textMuted },
-  navTitleInput: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.text, marginLeft: 4, paddingVertical: 2, paddingHorizontal: 4, borderBottomWidth: 1.5, borderBottomColor: colors.primary },
+  navTitleInput: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text, marginLeft: 4, paddingVertical: 2, paddingHorizontal: 4, borderBottomWidth: 1.5, borderBottomColor: colors.primary },
+  saveRouteBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1.5, borderColor: colors.primary },
+  saveRouteBtnSaved:{ backgroundColor: colors.primary, borderColor: colors.primary },
+  saveRouteBtnText: { fontSize: 11, fontWeight: '600', color: colors.primary },
+  saveRouteBtnTextSaved: { color: '#fff' },
   // Ask AI
   askCard:       { marginHorizontal: P, marginBottom: 8, backgroundColor: colors.white, borderRadius: 10, borderWidth: 1, borderColor: colors.border, padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3, elevation: 1 },
   askRow:        { flexDirection: 'row', gap: 8, alignItems: 'center' },
@@ -1595,13 +1605,13 @@ const s = StyleSheet.create({
   routeSelectorMetaActive:{ color: colors.textMid },
 
   routesList:       { paddingHorizontal: P, paddingTop: 2 },
-  routeDescInline:  { fontSize: 11, fontWeight: '300', color: colors.textMid, marginTop: 2, lineHeight: 15 },
+  routeDescInline:  { fontSize: 11, fontWeight: '300', color: colors.textMid, marginTop: 2, marginHorizontal: P, lineHeight: 15 },
   onMapLabel:       { fontSize: 8.5, fontWeight: '500', color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.4 },
 
   // Route action buttons
   routeActions:       { flexDirection: 'row', gap: 8, marginHorizontal: P, marginBottom: 8 },
   navigateBtn:        { marginHorizontal: P, marginBottom: 6, backgroundColor: colors.good, borderRadius: 8, paddingVertical: 11, alignItems: 'center' },
-  viewRouteBtn:       { marginHorizontal: P, marginBottom: 8, borderRadius: 8, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: colors.primary },
+  viewRouteBtn:       { marginHorizontal: P, marginTop: 10, marginBottom: 12, borderRadius: 8, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: colors.primary },
   viewRouteBtnText:   { fontSize: 13, fontWeight: '500', color: colors.primary },
   navigateBtnText:    { fontSize: 13, fontWeight: '600', color: '#fff', letterSpacing: 0.2 },
 
@@ -1659,8 +1669,8 @@ const s = StyleSheet.create({
   modalSaveText:    { fontSize: 14, fontWeight: '600', color: '#fff' },
 
   drawBar:             { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, gap: 6, borderBottomWidth: 0.5, borderBottomColor: colors.border, backgroundColor: colors.white, zIndex: 10, elevation: 2 },
-  mapExpandBtn:        { position: 'absolute', bottom: 46, left: 12, width: 28, height: 28, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.93)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' },
-  mapExpandBtnText:    { fontSize: 14, color: colors.primary, lineHeight: 16, marginTop: 1 },
+  mapExpandBtn:        { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white },
+  mapExpandBtnText:    { fontSize: 11, fontWeight: '500', color: colors.primary },
   drawStatsOverlay:    { position: 'absolute', top: 10, left: 0, right: 0, alignItems: 'center', pointerEvents: 'none' },
   drawStatsText:       { backgroundColor: 'rgba(0,0,0,0.42)', color: '#fff', fontSize: 12, fontWeight: '600', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20, overflow: 'hidden', letterSpacing: 0.2 },
   drawClearBtn:        { borderColor: colors.warn + 'aa', backgroundColor: colors.warnLight || '#fff5f0' },
