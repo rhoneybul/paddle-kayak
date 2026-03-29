@@ -3,7 +3,7 @@
     "name": "Solvaa",
     "slug": "kayak-planner",
     "scheme": "solvaa",
-    "version": "1.9.0",
+    "version": "1.10.0",
     "orientation": "portrait",
     "icon": "./assets/icons/tortuga/ios/AppIcon-1024.png",
     "userInterfaceStyle": "light",
