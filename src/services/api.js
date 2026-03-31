@@ -82,6 +82,17 @@ export const api = {
     get: (lat, lon) =>
       request('GET', `/api/weather?lat=${lat}&lon=${lon}`),
   },
+
+  // ── Points of Interest ──────────────────────────────────────────────────
+  pois: {
+    search: (lat, lon, radius = 5, types = 'cafe,pub,campsite') =>
+      request('GET', `/api/pois?lat=${lat}&lon=${lon}&radius=${radius}&types=${types}`),
+  },
+
+  // ── Feedback ────────────────────────────────────────────────────────────
+  feedback: {
+    create: (data) => request('POST', '/api/feedback', data),
+  },
 };
 
 export default api;

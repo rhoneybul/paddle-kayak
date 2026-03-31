@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontFamily } from '../theme';
 import { getCurrentUser, signOut } from '../services/authService';
 import { getStravaTokens } from '../services/stravaService';
-import { SearchIcon } from '../components/Icons';
+import { SearchIcon, PaddleIcon, DrawIcon, ChatIcon } from '../components/Icons';
 
 export default function HomeScreen({ navigation }) {
   const [name, setName]                       = useState(null);
@@ -41,7 +41,8 @@ export default function HomeScreen({ navigation }) {
         style={s.bgImageInner}
         resizeMode="cover"
       />
-      {/* Greyscale overlay */}
+      {/* Greyscale desaturation overlay (iOS — CSS filter not supported) */}
+      <View style={s.bgGreyscale} />
       <View style={s.bgOverlay} />
       <SafeAreaView style={s.container}>
       {/* Header */}
@@ -70,6 +71,22 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.planCtaSub}>AI-powered route suggestions</Text>
         </View>
         <Text style={s.planCtaArrow}>›</Text>
+      </TouchableOpacity>
+
+      {/* Draw a route CTA */}
+      <TouchableOpacity
+        style={s.drawCta}
+        onPress={() => navigation.navigate('SavedRoutes', { drawNew: true })}
+        activeOpacity={0.88}
+      >
+        <View style={s.drawCtaIcon}>
+          <DrawIcon size={16} color={colors.primary} />
+        </View>
+        <View style={s.planCtaText}>
+          <Text style={s.drawCtaTitle}>Draw a route</Text>
+          <Text style={s.drawCtaSub}>Freehand on the map, no search needed</Text>
+        </View>
+        <Text style={s.planCtaArrow}>{'\u203A'}</Text>
       </TouchableOpacity>
 
       {/* Actions card */}
@@ -106,6 +123,40 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.actionChevron}>›</Text>
         </TouchableOpacity>
 
+        <View style={s.actionDivider} />
+
+        <TouchableOpacity
+          style={s.actionRow}
+          onPress={() => navigation.navigate('CompletedPaddles')}
+          activeOpacity={0.75}
+        >
+          <View style={[s.actionIconWrap, s.actionIconSaved]}>
+            <PaddleIcon size={16} color={colors.primary} />
+          </View>
+          <View style={s.actionTextWrap}>
+            <Text style={s.actionLabel}>Completed Paddles</Text>
+            <Text style={s.actionSub}>Your paddle history on a map</Text>
+          </View>
+          <Text style={s.actionChevron}>›</Text>
+        </TouchableOpacity>
+
+        <View style={s.actionDivider} />
+
+        <TouchableOpacity
+          style={s.actionRow}
+          onPress={() => navigation.navigate('Feedback')}
+          activeOpacity={0.75}
+        >
+          <View style={[s.actionIconWrap, s.actionIconSaved]}>
+            <ChatIcon size={16} color={colors.primary} />
+          </View>
+          <View style={s.actionTextWrap}>
+            <Text style={s.actionLabel}>Give Feedback</Text>
+            <Text style={s.actionSub}>Help us improve Solvaa</Text>
+          </View>
+          <Text style={s.actionChevron}>›</Text>
+        </TouchableOpacity>
+
       </View>
     </SafeAreaView>
     </View>
@@ -118,8 +169,14 @@ const s = StyleSheet.create({
   bgImageInner: {
     position: 'absolute', bottom: 0, left: 0,
     width: '100%', height: '55%',
-    opacity: 0.45,
+    opacity: Platform.OS === 'web' ? 0.45 : 0.35,
     ...Platform.select({ web: { filter: 'grayscale(100%)' } }),
+  },
+  bgGreyscale:  {
+    position: 'absolute', bottom: 0, left: 0,
+    width: '100%', height: '55%',
+    backgroundColor: colors.bg,
+    opacity: Platform.OS === 'web' ? 0 : 0.55,
   },
   bgOverlay:    { ...StyleSheet.absoluteFillObject, backgroundColor: colors.bg, opacity: 0.45 },
   container:    { flex: 1, paddingHorizontal: 20, paddingTop: 8 },
@@ -143,6 +200,17 @@ const s = StyleSheet.create({
   planCtaSub:      { fontSize: 13, fontWeight: '400', fontFamily: FF.regular, color: 'rgba(255,255,255,0.75)', marginTop: 1 },
   planCtaArrow:    { fontSize: 24, fontWeight: '300', fontFamily: FF.light, color: 'rgba(255,255,255,0.6)' },
 
+  drawCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: colors.white, borderRadius: 18,
+    paddingHorizontal: 18, paddingVertical: 14, marginBottom: 12,
+    borderWidth: 1.5, borderColor: colors.border,
+    shadowColor: '#1e3a8a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 12, elevation: 2,
+  },
+  drawCtaIcon:  { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  drawCtaTitle: { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text },
+  drawCtaSub:   { fontSize: 12, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginTop: 1 },
+
   startPaddleCta: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
     backgroundColor: colors.white, borderRadius: 18,
@@ -165,7 +233,7 @@ const s = StyleSheet.create({
   actionIconWrap:   { width: 38, height: 38, borderRadius: 11, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   actionIconNeutral:{ backgroundColor: colors.bgDeep },
   actionIconSaved:  { backgroundColor: colors.primaryLight },
-  actionIconSymbol: { fontSize: 16, color: colors.textMid, lineHeight: 20 },
+  actionIconSymbol: { fontSize: 16, color: colors.primary, lineHeight: 20 },
   actionTextWrap:   { flex: 1 },
   actionLabel:      { fontSize: 15, fontWeight: '500', fontFamily: FF.medium, color: colors.text },
   actionSub:        { fontSize: 12, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginTop: 1 },

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView, RefreshControl, Platform, Linking, ActivityIndicator, Image, Animated, useWindowDimensions,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Alert, ScrollView, RefreshControl, Platform, Linking, ActivityIndicator, Image, Animated, useWindowDimensions, Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontFamily } from '../theme';
-import { getSavedRoutes, getSavedRoutesLocal, deleteSavedRoute, saveRoute, updateRouteWaypoints, updateRouteLocalKnowledge, updateRouteLkMessages } from '../services/storageService';
+import { getSavedRoutes, getSavedRoutesLocal, deleteSavedRoute, saveRoute, updateRouteWaypoints, updateRouteLocalKnowledge, updateRouteLkMessages, updateRoutePhotos, getCollections, createCollection, deleteCollection, addRouteToCollection, removeRouteFromCollection } from '../services/storageService';
 import { getWeatherWithCache } from '../services/weatherService';
 import { fetchTides, buildTideHeightMap, buildTideExtremeMap } from '../services/tideService';
 import { generateLocalKnowledge, askLocalKnowledge } from '../services/claudeService';
@@ -14,7 +14,8 @@ import PaddleMap from '../components/PaddleMap';
 import ConditionsTimeline from '../components/ConditionsTimeline';
 import { gpxRouteBearing } from '../components/PaddleMap';
 import { HeartIcon } from '../components/UI';
-import { BackIcon, HomeIcon, TrashIcon, PencilIcon, CompassIcon } from '../components/Icons';
+import { BackIcon, HomeIcon, TrashIcon, PencilIcon, CompassIcon, FolderIcon, SearchIcon } from '../components/Icons';
+import { searchLocations, MIN_SEARCH_LENGTH, SEARCH_DEBOUNCE_MS } from '../services/geocodingService';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ const DATE_STRIP = (() => {
 
 export default function SavedRoutesScreen({ navigation, route: navRoute }) {
   const previewRoute = navRoute?.params?.previewRoute ?? null;
+  const drawNew      = navRoute?.params?.drawNew ?? false;
 
   const [routes, setRoutes]               = useState([]);
   const [loading, setLoading]             = useState(true);
@@ -81,11 +83,34 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
   const [photosLoading, setPhotosLoading]   = useState(false);
   const [campsites, setCampsites]           = useState([]);
 
+  // Collections
+  const [collections, setCollections]       = useState([]);
+  const [activeTab, setActiveTab]           = useState('routes'); // 'routes' | 'collections'
+  const [selectedCollection, setSelectedCollection] = useState(null);
+  const [showNewCollection, setShowNewCollection]   = useState(false);
+  const [newCollectionName, setNewCollectionName]   = useState('');
+  const [showAddToCollection, setShowAddToCollection] = useState(false);
+
+  // POI search
+  const [pois, setPois]                     = useState([]);
+  const [poisLoading, setPoisLoading]       = useState(false);
+  const [poiType, setPoiType]               = useState(null); // currently selected POI type
+
+  // Location search (for new drawn routes)
+  const [locSearch, setLocSearch]               = useState('');
+  const [locSearchResults, setLocSearchResults] = useState([]);
+  const [locSearchLoading, setLocSearchLoading] = useState(false);
+  const [showLocSearch, setShowLocSearch]       = useState(false);
+  const locSearchTimer                          = useRef(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const saved = await getSavedRoutes();
       setRoutes(saved);
+      // Load collections
+      const cols = await getCollections();
+      setCollections(cols);
       // If navigated with a previewRoute, find the saved version or show as unsaved
       if (previewRoute) {
         const match = saved.find(r => r.name === previewRoute.name);
@@ -102,6 +127,48 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Handle "Draw a route" entry — create blank route in draw mode
+  useEffect(() => {
+    if (!drawNew) return;
+    // Show the map immediately with no coords — GPS will update it
+    const blankRoute = {
+      id: `draw-${Date.now()}`,
+      name: 'New Route',
+      waypoints: [],
+      distanceKm: 0,
+      estimated_duration: 0,
+      isDrawn: true,
+      locationCoords: null,
+      description: '',
+      highlights: [],
+      terrain: 'coastal',
+      difficulty: 'moderate',
+    };
+    setSelected(blankRoute);
+    setIsUnsaved(true);
+    setDrawMode(true);
+    setShowLocSearch(true);
+    setMapExpanded(true);
+    Animated.timing(mapHeightAnim, {
+      toValue: Math.round(screenHeight * 0.6),
+      duration: 0,
+      useNativeDriver: false,
+    }).start();
+
+    // Fetch GPS in background and update when available
+    (async () => {
+      try {
+        const { default: Location } = await import('expo-location');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: 3 /* Balanced */ });
+          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setSelected(prev => prev && !prev.locationCoords ? { ...prev, locationCoords: coords } : prev);
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [drawNew]);
 
   // Ticket 5: Pull to refresh
   const onRefresh = useCallback(async () => {
@@ -143,14 +210,29 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
   // Fetch per-waypoint photos + campsites when selected route changes
   useEffect(() => {
     if (!selected) { setWaypointPhotos([]); setCampsites([]); return; }
+    // Don't fetch photos until the route has a location and waypoints
+    if (!selected.locationCoords && (!selected.waypoints || selected.waypoints.length === 0)) {
+      setWaypointPhotos([]); setCampsites([]); return;
+    }
     let cancelled = false;
 
-    // Photos per waypoint
+    // Photos: use cached if available, otherwise fetch and cache
     (async () => {
+      if (selected.cachedPhotos && selected.cachedPhotos.length > 0) {
+        if (!cancelled) setWaypointPhotos(selected.cachedPhotos);
+        return;
+      }
       setPhotosLoading(true);
       try {
         const groups = await fetchWaypointPhotos(selected);
-        if (!cancelled) setWaypointPhotos(groups);
+        if (!cancelled) {
+          setWaypointPhotos(groups);
+          // Cache the photos on the saved route
+          if (groups.length > 0 && !isUnsaved && selected.id) {
+            await updateRoutePhotos(selected.id, groups);
+            setSelected(prev => ({ ...prev, cachedPhotos: groups }));
+          }
+        }
       } catch { if (!cancelled) setWaypointPhotos([]); }
       finally  { if (!cancelled) setPhotosLoading(false); }
     })();
@@ -236,18 +318,23 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
     setEditingName(false);
   };
 
-  // Load saved local knowledge + auto-enter draw mode for undrawn routes
+  // Load saved local knowledge + reset draw state when switching routes
   useEffect(() => {
     const saved = selected?.localKnowledge || null;
     setLocalKnowledge(saved);
     setLkExpanded(false);
     setLkMessages(selected?.lkMessages || []);
     setLkQuestion('');
-    setMapExpanded(false);
-    Animated.timing(mapHeightAnim, { toValue: 280, duration: 0, useNativeDriver: false }).start();
 
-    setDrawnPoints([]);
-    setDrawMode(false);
+    // Don't reset draw mode / map if this is a fresh drawNew route
+    const isDrawNew = selected?.id?.startsWith('draw-');
+    if (!isDrawNew) {
+      setMapExpanded(false);
+      Animated.timing(mapHeightAnim, { toValue: 280, duration: 0, useNativeDriver: false }).start();
+      setDrawnPoints([]);
+      setDrawMode(false);
+      setShowLocSearch(false);
+    }
   }, [selected?.id]);
 
 
@@ -341,6 +428,11 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               <Text style={s.navTitle} numberOfLines={1}>{selected.name}</Text>
             )}
             <View style={s.navActions}>
+              {!isUnsaved && collections.length > 0 && (
+                <TouchableOpacity onPress={() => setShowAddToCollection(true)} style={s.navIconBtn}>
+                  <FolderIcon size={20} color={colors.primary} />
+                </TouchableOpacity>
+              )}
               {!isUnsaved && (
                 <TouchableOpacity onPress={() => { setNameInput(selected.name); setEditingName(true); }} style={s.navIconBtn}>
                   <PencilIcon size={20} color={colors.textMuted} />
@@ -356,6 +448,65 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Location search bar — shown when drawing a new route */}
+          {showLocSearch && drawMode && (
+            <View style={s.locSearchWrap}>
+              <View style={s.locSearchRow}>
+                <SearchIcon size={16} color={colors.textMuted} />
+                <TextInput
+                  style={s.locSearchInput}
+                  value={locSearch}
+                  onChangeText={(text) => {
+                    setLocSearch(text);
+                    if (locSearchTimer.current) clearTimeout(locSearchTimer.current);
+                    if (text.trim().length < MIN_SEARCH_LENGTH) {
+                      setLocSearchResults([]); return;
+                    }
+                    locSearchTimer.current = setTimeout(async () => {
+                      setLocSearchLoading(true);
+                      try {
+                        const results = await searchLocations(text);
+                        setLocSearchResults(results);
+                      } catch { setLocSearchResults([]); }
+                      finally { setLocSearchLoading(false); }
+                    }, SEARCH_DEBOUNCE_MS);
+                  }}
+                  placeholder="Search for a location…"
+                  placeholderTextColor={colors.textFaint}
+                  returnKeyType="search"
+                />
+                {locSearchLoading && <ActivityIndicator size="small" color={colors.primary} />}
+                {locSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => { setLocSearch(''); setLocSearchResults([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={{ fontSize: 16, color: colors.textMuted }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {locSearchResults.length > 0 && (
+                <View style={s.locSearchResults}>
+                  {locSearchResults.map((result, i) => (
+                    <TouchableOpacity
+                      key={`${result.lat}-${result.lng}-${i}`}
+                      style={[s.locSearchResultItem, i < locSearchResults.length - 1 && s.locSearchResultBorder]}
+                      onPress={() => {
+                        const coords = { lat: result.lat, lng: result.lng };
+                        setSelected(prev => ({ ...prev, locationCoords: coords, location: result.label }));
+                        setLocSearch(result.label);
+                        setLocSearchResults([]);
+                        setShowLocSearch(false);
+                        Keyboard.dismiss();
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={s.locSearchResultLabel} numberOfLines={1}>{result.label}</Text>
+                      <Text style={s.locSearchResultCoords}>{result.lat.toFixed(3)}, {result.lng.toFixed(3)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
 
           <Animated.View style={{ height: mapHeightAnim, overflow: 'hidden' }}>
             <PaddleMap
@@ -435,7 +586,32 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                     </TouchableOpacity>
                   </>
                 )}
-                <TouchableOpacity style={s.drawClear} onPress={() => setDrawnPoints([])} activeOpacity={0.7}>
+                <TouchableOpacity
+                  style={s.drawClear}
+                  onPress={() => {
+                    const doClear = async () => {
+                      setDrawnPoints([]);
+                      // Also clear the saved route's waypoints so the route resets fully
+                      if (selected && !isUnsaved) {
+                        await updateRouteWaypoints(selected.id, { waypoints: [], distanceKm: 0, estimated_duration: 0, isDrawn: false });
+                        const updated = { ...selected, waypoints: [], distanceKm: 0, estimated_duration: 0, isDrawn: false };
+                        setSelected(updated);
+                        getSavedRoutesLocal().then(fresh => setRoutes(fresh)).catch(() => {});
+                      } else if (selected) {
+                        setSelected({ ...selected, waypoints: [], distanceKm: 0, estimated_duration: 0, isDrawn: false });
+                      }
+                    };
+                    if (Platform.OS === 'web') {
+                      if (window.confirm('Clear all points and reset the route?')) doClear();
+                    } else {
+                      Alert.alert('Clear Route', 'Clear all points and reset the route?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Clear', style: 'destructive', onPress: doClear },
+                      ]);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                >
                   <Text style={s.drawClearText}>Clear all</Text>
                 </TouchableOpacity>
                 <View style={{ flex: 1 }} />
@@ -450,6 +626,58 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               </View>
             )}
           </View>
+
+          {/* POI search chips */}
+          {!drawMode && selected.locationCoords && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.poiChipStrip}>
+              {[
+                { key: 'cafe', label: 'Coffee' },
+                { key: 'pub', label: 'Pubs' },
+                { key: 'campsite', label: 'Campsites' },
+                { key: 'restaurant', label: 'Restaurants' },
+                { key: 'slipway', label: 'Slipways' },
+                { key: 'parking', label: 'Parking' },
+                { key: 'toilet', label: 'Toilets' },
+              ].map(({ key, label }) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[s.poiChip, poiType === key && s.poiChipActive]}
+                  onPress={async () => {
+                    if (poiType === key) { setPoiType(null); setPois([]); return; }
+                    setPoiType(key);
+                    setPoisLoading(true);
+                    try {
+                      const data = await api.pois.search(
+                        selected.locationCoords.lat,
+                        selected.locationCoords.lng,
+                        10, key,
+                      );
+                      setPois(Array.isArray(data) ? data : []);
+                    } catch { setPois([]); }
+                    finally { setPoisLoading(false); }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.poiChipText, poiType === key && s.poiChipTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+          {poisLoading && (
+            <View style={{ paddingVertical: 6, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          )}
+          {pois.length > 0 && !poisLoading && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.poiResultStrip}>
+              {pois.map((poi, i) => (
+                <View key={poi.id || i} style={s.poiCard}>
+                  <Text style={s.poiName} numberOfLines={1}>{poi.name || 'Unnamed'}</Text>
+                  <Text style={s.poiType}>{poi.type}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
 
           {/* Scrollable content */}
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
@@ -492,22 +720,99 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
                 <Text style={s.sectionLabel}>{group.label.toUpperCase()}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.photoStrip}>
                   {group.photos.map((photo, i) => (
-                    <TouchableOpacity
-                      key={i}
-                      style={s.photoCard}
-                      activeOpacity={0.85}
-                      onPress={() => photo.commonsUrl && Linking.openURL(photo.commonsUrl)}
-                    >
-                      <Image source={{ uri: photo.url }} style={s.photoImage} resizeMode="cover" />
-                      <Text style={s.photoCaption} numberOfLines={2}>{photo.title}</Text>
-                      {photo.commonsUrl && (
-                        <Text style={s.photoLink}>View on map →</Text>
-                      )}
-                    </TouchableOpacity>
+                    <View key={i} style={s.photoCard}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => photo.commonsUrl && Linking.openURL(photo.commonsUrl)}
+                      >
+                        <Image source={{ uri: photo.url }} style={s.photoImage} resizeMode="cover" />
+                        <Text style={s.photoCaption} numberOfLines={2}>{photo.title}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={s.photoRemoveBtn}
+                        onPress={() => {
+                          const updated = waypointPhotos.map((g, gIdx) => gIdx === gi
+                            ? { ...g, photos: g.photos.filter((_, pIdx) => pIdx !== i) }
+                            : g
+                          ).filter(g => g.photos.length > 0);
+                          setWaypointPhotos(updated);
+                          if (!isUnsaved && selected?.id) {
+                            updateRoutePhotos(selected.id, updated);
+                            setSelected(prev => ({ ...prev, cachedPhotos: updated }));
+                          }
+                        }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Text style={s.photoRemoveText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
                   ))}
                 </ScrollView>
               </View>
             ))}
+            {/* Photo actions: load / refresh / add more */}
+            {!photosLoading && selected && (
+              <View style={s.photoActions}>
+                <TouchableOpacity
+                  style={s.generatePhotosBtn}
+                  onPress={async () => {
+                    setPhotosLoading(true);
+                    try {
+                      const groups = await fetchWaypointPhotos(selected);
+                      if (groups.length > 0) {
+                        setWaypointPhotos(groups);
+                        if (!isUnsaved && selected.id) {
+                          await updateRoutePhotos(selected.id, groups);
+                          setSelected(prev => ({ ...prev, cachedPhotos: groups }));
+                        }
+                      }
+                    } catch { /* ignore */ }
+                    finally { setPhotosLoading(false); }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.generatePhotosBtnText}>
+                    {waypointPhotos.length > 0 ? 'Refresh photos' : 'Load photos'}
+                  </Text>
+                </TouchableOpacity>
+                {waypointPhotos.length > 0 && (
+                  <TouchableOpacity
+                    style={s.generatePhotosBtn}
+                    onPress={async () => {
+                      setPhotosLoading(true);
+                      try {
+                        const newGroups = await fetchWaypointPhotos(selected);
+                        if (newGroups.length > 0) {
+                          // Merge: deduplicate by URL, append new photos
+                          const existingUrls = new Set(waypointPhotos.flatMap(g => g.photos.map(p => p.url)));
+                          const merged = waypointPhotos.map(g => ({ ...g }));
+                          for (const ng of newGroups) {
+                            const newPhotos = ng.photos.filter(p => !existingUrls.has(p.url));
+                            if (newPhotos.length > 0) {
+                              const existing = merged.find(g => g.label === ng.label);
+                              if (existing) {
+                                existing.photos = [...existing.photos, ...newPhotos];
+                              } else {
+                                merged.push({ ...ng, photos: newPhotos });
+                              }
+                            }
+                          }
+                          setWaypointPhotos(merged);
+                          if (!isUnsaved && selected.id) {
+                            await updateRoutePhotos(selected.id, merged);
+                            setSelected(prev => ({ ...prev, cachedPhotos: merged }));
+                          }
+                        }
+                      } catch { /* ignore */ }
+                      finally { setPhotosLoading(false); }
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={s.generatePhotosBtnText}>Add more photos</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
 
             {/* Save route (only shown for unsaved previews) */}
             {isUnsaved && (
@@ -787,10 +1092,78 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
 
             <View style={{ height: 32 }} />
           </ScrollView>
+
+          {/* Add to collection modal */}
+          {showAddToCollection && (
+            <View style={s.collectionModal}>
+              <View style={s.collectionModalCard}>
+                <Text style={s.collectionModalTitle}>Add to collection</Text>
+                {collections.map(col => (
+                  <TouchableOpacity
+                    key={col.id}
+                    style={s.collectionModalRow}
+                    onPress={() => handleAddToCollection(col.id)}
+                    activeOpacity={0.7}
+                  >
+                    <FolderIcon size={16} color={colors.primary} />
+                    <Text style={s.collectionModalRowText}>{col.name}</Text>
+                    {col.routeIds.includes(selected?.id) && (
+                      <Text style={s.collectionModalCheck}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={s.collectionModalCancel}
+                  onPress={() => setShowAddToCollection(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.collectionModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </SafeAreaView>
       </View>
     );
   }
+
+  // ── Collections helper ────────────────────────────────────────────────────
+  const filteredRoutes = selectedCollection
+    ? routes.filter(r => selectedCollection.routeIds.includes(r.id))
+    : routes;
+
+  const handleCreateCollection = async () => {
+    const name = newCollectionName.trim();
+    if (!name) return;
+    const col = await createCollection(name);
+    setCollections(prev => [col, ...prev]);
+    setNewCollectionName('');
+    setShowNewCollection(false);
+  };
+
+  const handleDeleteCollection = (col) => {
+    const doDelete = async () => {
+      await deleteCollection(col.id);
+      setCollections(prev => prev.filter(c => c.id !== col.id));
+      if (selectedCollection?.id === col.id) setSelectedCollection(null);
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete collection "${col.name}"?`)) doDelete();
+    } else {
+      Alert.alert('Delete Collection', `Delete "${col.name}"?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
+  const handleAddToCollection = async (colId) => {
+    if (!selected) return;
+    await addRouteToCollection(colId, selected.id);
+    const fresh = await getCollections();
+    setCollections(fresh);
+    setShowAddToCollection(false);
+  };
 
   // ── List view ────────────────────────────────────────────────────────────────
   return (
@@ -806,11 +1179,83 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
           </TouchableOpacity>
         </View>
 
+        {/* Tab bar: Routes | Collections */}
+        <View style={s.tabBar}>
+          <TouchableOpacity
+            style={[s.tab, activeTab === 'routes' && s.tabActive]}
+            onPress={() => { setActiveTab('routes'); setSelectedCollection(null); }}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.tabText, activeTab === 'routes' && s.tabTextActive]}>Routes</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.tab, activeTab === 'collections' && s.tabActive]}
+            onPress={() => setActiveTab('collections')}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.tabText, activeTab === 'collections' && s.tabTextActive]}>Collections</Text>
+          </TouchableOpacity>
+        </View>
+
         {loading ? (
           <View style={s.centered}>
             <Text style={s.emptyTitle}>Loading…</Text>
           </View>
-        ) : routes.length === 0 ? (
+        ) : activeTab === 'collections' ? (
+          /* ── Collections tab ─────────────────────────────────────────── */
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={s.list}>
+            <TouchableOpacity
+              style={s.newCollectionBtn}
+              onPress={() => setShowNewCollection(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={s.newCollectionBtnText}>+ New Collection</Text>
+            </TouchableOpacity>
+            {showNewCollection && (
+              <View style={s.newCollectionRow}>
+                <TextInput
+                  style={s.newCollectionInput}
+                  value={newCollectionName}
+                  onChangeText={setNewCollectionName}
+                  placeholder="Collection name…"
+                  placeholderTextColor={colors.textFaint}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={handleCreateCollection}
+                />
+                <TouchableOpacity style={s.newCollectionSave} onPress={handleCreateCollection} activeOpacity={0.7}>
+                  <Text style={s.newCollectionSaveText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {collections.length === 0 && !showNewCollection && (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <Text style={s.emptyTitle}>No collections</Text>
+                <Text style={s.emptySub}>Create a collection to group your saved routes</Text>
+              </View>
+            )}
+            {collections.map(col => (
+              <TouchableOpacity
+                key={col.id}
+                style={s.collectionCard}
+                onPress={() => { setSelectedCollection(col); setActiveTab('routes'); }}
+                activeOpacity={0.85}
+              >
+                <FolderIcon size={20} color={colors.primary} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={s.collectionName}>{col.name}</Text>
+                  <Text style={s.collectionMeta}>{col.routeIds.length} route{col.routeIds.length !== 1 ? 's' : ''}</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => handleDeleteCollection(col)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <TrashIcon size={15} color={colors.warn} />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        ) : filteredRoutes.length === 0 && !selectedCollection ? (
           <View style={s.centered}>
             <Text style={s.emptyTitle}>No saved routes yet</Text>
             <Text style={s.emptySub}>Generate a plan and tap Save Route to bookmark a paddle</Text>
@@ -822,9 +1267,26 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               <Text style={s.planBtnText}>Plan a paddle</Text>
             </TouchableOpacity>
           </View>
+        ) : filteredRoutes.length === 0 && selectedCollection ? (
+          <View style={s.centered}>
+            <Text style={s.emptyTitle}>{selectedCollection.name}</Text>
+            <Text style={s.emptySub}>No routes in this collection yet. Add routes from their detail view.</Text>
+            <TouchableOpacity style={s.planBtn} onPress={() => setSelectedCollection(null)} activeOpacity={0.85}>
+              <Text style={s.planBtnText}>View all routes</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
+          <>
+          {selectedCollection && (
+            <View style={s.collectionHeader}>
+              <TouchableOpacity onPress={() => setSelectedCollection(null)} activeOpacity={0.7}>
+                <Text style={s.collectionBackText}>← All routes</Text>
+              </TouchableOpacity>
+              <Text style={s.collectionHeaderTitle}>{selectedCollection.name}</Text>
+            </View>
+          )}
           <FlatList
-            data={routes}
+            data={filteredRoutes}
             keyExtractor={r => r.id}
             contentContainerStyle={s.list}
             refreshControl={
@@ -871,6 +1333,7 @@ export default function SavedRoutesScreen({ navigation, route: navRoute }) {
               </TouchableOpacity>
             )}
           />
+          </>
         )}
       </SafeAreaView>
     </View>
@@ -939,6 +1402,11 @@ const s = StyleSheet.create({
   photoImage:     { width: 160, height: 110 },
   photoCaption:   { fontSize: 9, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, paddingHorizontal: 6, paddingTop: 5, lineHeight: 13 },
   photoLink:      { fontSize: 8, fontWeight: '500', fontFamily: FF.medium, color: colors.primary, paddingHorizontal: 6, paddingBottom: 6, paddingTop: 2 },
+  photoRemoveBtn:  { paddingHorizontal: 6, paddingVertical: 4 },
+  photoRemoveText: { fontSize: 8, fontWeight: '500', fontFamily: FF.medium, color: colors.warn },
+  photoActions:          { flexDirection: 'row', gap: 8, marginHorizontal: P, marginBottom: 8 },
+  generatePhotosBtn:     { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.border },
+  generatePhotosBtnText: { fontSize: 11, fontWeight: '500', fontFamily: FF.medium, color: colors.primary },
 
   // Date strip
   dateStrip:      { flexDirection: 'row', gap: 6, paddingHorizontal: P, paddingBottom: 10 },
@@ -1010,5 +1478,55 @@ const s = StyleSheet.create({
   lkSendBtnDisabled:     { backgroundColor: colors.textFaint },
   lkSendText:            { fontSize: 16, color: '#fff', lineHeight: 18 },
 
+  // Tab bar
+  tabBar:             { flexDirection: 'row', marginHorizontal: P, marginTop: 8, backgroundColor: '#e1e0db', borderRadius: 10, padding: 2, gap: 2 },
+  tab:                { flex: 1, padding: 10, alignItems: 'center', borderRadius: 8 },
+  tabActive:          { backgroundColor: colors.white, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  tabText:            { fontSize: 13, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted },
+  tabTextActive:      { fontWeight: '600', fontFamily: FF.semibold, color: colors.text },
 
+  // Collections
+  collectionCard:     { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, borderRadius: 18, padding: 16, marginBottom: 8, shadowColor: '#1a1d26', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 3 },
+  collectionName:     { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text },
+  collectionMeta:     { fontSize: 12, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginTop: 1 },
+  collectionHeader:   { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: P, paddingVertical: 8 },
+  collectionBackText: { fontSize: 13, fontWeight: '500', fontFamily: FF.medium, color: colors.primary },
+  collectionHeaderTitle: { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text },
+  newCollectionBtn:      { marginBottom: 10, paddingVertical: 12, alignItems: 'center', borderRadius: 14, borderWidth: 1.5, borderColor: colors.primary, borderStyle: 'dashed' },
+  newCollectionBtnText:  { fontSize: 13, fontWeight: '500', fontFamily: FF.medium, color: colors.primary },
+  newCollectionRow:      { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  newCollectionInput:    { flex: 1, backgroundColor: colors.white, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, fontFamily: FF.regular, color: colors.text, borderWidth: 1, borderColor: colors.border },
+  newCollectionSave:     { backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 18, justifyContent: 'center' },
+  newCollectionSaveText: { fontSize: 13, fontWeight: '600', fontFamily: FF.semibold, color: '#fff' },
+
+  // Collection modal
+  collectionModal:         { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end', zIndex: 10 },
+  collectionModalCard:     { backgroundColor: colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: P, paddingBottom: 40 },
+  collectionModalTitle:    { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text, marginBottom: 12 },
+  collectionModalRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight },
+  collectionModalRowText:  { flex: 1, fontSize: 14, fontWeight: '400', fontFamily: FF.regular, color: colors.text },
+  collectionModalCheck:    { fontSize: 14, fontWeight: '600', color: colors.primary },
+  collectionModalCancel:   { marginTop: 14, paddingVertical: 12, alignItems: 'center' },
+  collectionModalCancelText: { fontSize: 14, fontWeight: '500', fontFamily: FF.medium, color: colors.textMuted },
+
+  // Location search
+  locSearchWrap:        { paddingHorizontal: P, paddingVertical: 6, backgroundColor: colors.white, borderBottomWidth: 0.5, borderBottomColor: colors.border },
+  locSearchRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.bg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
+  locSearchInput:       { flex: 1, fontSize: 14, fontWeight: '400', fontFamily: FF.regular, color: colors.text, padding: 0 },
+  locSearchResults:     { marginTop: 6, backgroundColor: colors.white, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, overflow: 'hidden' },
+  locSearchResultItem:  { paddingHorizontal: 14, paddingVertical: 10 },
+  locSearchResultBorder:{ borderBottomWidth: 0.5, borderBottomColor: colors.borderLight },
+  locSearchResultLabel: { fontSize: 14, fontWeight: '500', fontFamily: FF.medium, color: colors.text },
+  locSearchResultCoords:{ fontSize: 11, fontWeight: '300', fontFamily: FF.light, color: colors.textMuted, marginTop: 1 },
+
+  // POI search
+  poiChipStrip:     { paddingHorizontal: P, gap: 6, paddingVertical: 6 },
+  poiChip:          { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border },
+  poiChipActive:    { backgroundColor: colors.primary, borderColor: colors.primary },
+  poiChipText:      { fontSize: 12, fontWeight: '500', fontFamily: FF.medium, color: colors.textMid },
+  poiChipTextActive:{ color: '#fff' },
+  poiResultStrip:   { paddingHorizontal: P, gap: 6, paddingBottom: 6 },
+  poiCard:          { backgroundColor: colors.white, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, minWidth: 100 },
+  poiName:          { fontSize: 12, fontWeight: '500', fontFamily: FF.medium, color: colors.text },
+  poiType:          { fontSize: 10, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginTop: 1 },
 });

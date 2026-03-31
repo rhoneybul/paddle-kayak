@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  FlatList, RefreshControl, ActivityIndicator,
+  FlatList, RefreshControl, ActivityIndicator, useWindowDimensions, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontFamily } from '../theme';
-import { HomeIcon } from '../components/Icons';
-import { getHistory } from '../services/storageService';
+import { HomeIcon, TrashIcon, BackIcon } from '../components/Icons';
+import { getHistory, deleteFromHistory } from '../services/storageService';
+import PaddleMap from '../components/PaddleMap';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ export default function CompletedPaddlesScreen({ navigation }) {
   const [paddles, setPaddles]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showMap, setShowMap]       = useState(true);
+  const { height: screenHeight }    = useWindowDimensions();
 
   const load = useCallback(async () => {
     try {
@@ -78,19 +81,85 @@ export default function CompletedPaddlesScreen({ navigation }) {
 
   // ── Render helpers ──────────────────────────────────────────────────────────
 
+  const handleDeletePaddle = useCallback((paddle) => {
+    const doDelete = async () => {
+      const id = paddle?.id || paddle?.serverId;
+      if (id) await deleteFromHistory(id);
+      await load();
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this paddle? This cannot be undone.')) doDelete();
+    } else {
+      Alert.alert('Delete Paddle', 'Delete this paddle? This cannot be undone.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  }, [load]);
+
   const windKt    = p => p.weather?.current?.windSpeed   ?? p.weather?.hourly?.[0]?.windSpeed   ?? null;
   const waveM     = p => p.weather?.current?.waveHeight  ?? p.weather?.hourly?.[0]?.waveHeight  ?? null;
   const avgSpeedP = p => fmtSpeed(p.distancePaddled, p.durationSeconds);
 
-  // ── Flat list data: summary header + section headers + items ────────────────
+  // Build GPS tracks for the map from all paddles
+  const mapRoutes = paddles
+    .map(p => {
+      const track = (p.gpsTrack && p.gpsTrack.length > 0)
+        ? p.gpsTrack
+        : (p.route?.waypoints || []).map(w =>
+            Array.isArray(w)
+              ? { lat: w[0], lon: w[1] }
+              : { lat: w.lat || w.latitude, lon: w.lon || w.longitude }
+          );
+      if (track.length < 2) return null;
+      return { ...p, waypoints: track.map(t => [t.lat ?? t.latitude, t.lon ?? t.longitude]).filter(c => c[0] && c[1]) };
+    })
+    .filter(Boolean);
 
-  const listData = [{ type: 'summary' }];
+  // Find a center coord from the first paddle with coords
+  const centerCoords = (() => {
+    for (const p of paddles) {
+      const track = p.gpsTrack?.[0] || p.route?.waypoints?.[0];
+      if (track) {
+        const lat = Array.isArray(track) ? track[0] : (track.lat || track.latitude);
+        const lon = Array.isArray(track) ? track[1] : (track.lon || track.longitude);
+        if (lat && lon) return { lat, lon };
+      }
+      if (p.route?.locationCoords) {
+        return { lat: p.route.locationCoords.lat, lon: p.route.locationCoords.lng || p.route.locationCoords.lon };
+      }
+    }
+    return null;
+  })();
+
+  const mapHeight = Math.round(screenHeight * 0.3);
+
+  // ── Flat list data: map + summary header + section headers + items ─────────
+
+  const listData = [{ type: 'map' }, { type: 'summary' }];
   sections.forEach(sec => {
     listData.push({ type: 'month', title: sec.title });
     sec.data.forEach(p => listData.push({ type: 'paddle', paddle: p }));
   });
 
   const renderItem = ({ item }) => {
+    if (item.type === 'map') {
+      if (mapRoutes.length === 0 && !centerCoords) return null;
+      return (
+        <View style={{ marginBottom: 8 }}>
+          <PaddleMap
+            height={mapHeight}
+            coords={centerCoords}
+            routes={mapRoutes}
+            selectedIdx={-1}
+            simpleRoute
+            showZoomControls
+          />
+          <Text style={s.mapHint}>{mapRoutes.length} paddle{mapRoutes.length !== 1 ? 's' : ''} on map</Text>
+        </View>
+      );
+    }
+
     if (item.type === 'summary') {
       return (
         <View style={s.summary}>
@@ -136,6 +205,13 @@ export default function CompletedPaddlesScreen({ navigation }) {
             <Text style={s.distVal}>{(p.distancePaddled || 0).toFixed(1)}</Text>
             <Text style={s.distLbl}>km</Text>
           </View>
+          <TouchableOpacity
+            style={s.deleteBtn}
+            onPress={() => handleDeletePaddle(p)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <TrashIcon size={15} color={colors.warn} />
+          </TouchableOpacity>
         </View>
 
         <View style={s.statsRow}>
@@ -174,11 +250,11 @@ export default function CompletedPaddlesScreen({ navigation }) {
     <View style={s.container}>
       <SafeAreaView style={s.safe}>
         <View style={s.nav}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={s.back}>
-            <Text style={s.backText}>‹</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={s.navBtn}>
+            <BackIcon size={20} color={colors.primary} />
           </TouchableOpacity>
           <Text style={s.navTitle}>Completed Paddles</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Home')} style={s.back}>
+          <TouchableOpacity onPress={() => navigation.navigate('Home')} style={s.navBtn}>
             <HomeIcon size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
@@ -227,47 +303,48 @@ const s = StyleSheet.create({
   safe:      { flex: 1 },
   centered:  { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40, gap: 10 },
 
-  nav:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: colors.border },
-  back:     { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.primary },
-  navTitle: { flex: 1, fontSize: 17, fontWeight: '600', fontFamily: FF.semibold, color: colors.text, marginLeft: 4 },
+  nav:      { flexDirection: 'row', alignItems: 'center', paddingLeft: 6, paddingRight: 8, paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: colors.border },
+  navBtn:   { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  navTitle: { flex: 1, fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text, marginHorizontal: 4 },
 
-  list: { padding: P, gap: 0 },
+  list: { paddingHorizontal: P, paddingBottom: P, gap: 0 },
+  mapHint: { fontSize: 10, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, textAlign: 'center', paddingVertical: 6 },
 
   summary: {
     flexDirection: 'row', backgroundColor: colors.white,
     borderRadius: 18, overflow: 'hidden',
     marginBottom: 14,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 2,
+    shadowColor: '#1a1d26', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 3,
   },
   summaryCell:       { flex: 1, paddingVertical: 14, alignItems: 'center' },
   summaryCellBorder: { borderRightWidth: 0.5, borderRightColor: colors.borderLight },
-  summaryVal:        { fontSize: 18, fontWeight: '300', fontFamily: FF.light, color: colors.text, lineHeight: 20 },
-  summaryLbl:        { fontSize: 9, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 3 },
+  summaryVal:        { fontSize: 14, fontWeight: '500', fontFamily: FF.medium, color: colors.text, lineHeight: 17 },
+  summaryLbl:        { fontSize: 10, fontWeight: '500', fontFamily: FF.medium, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 3 },
 
-  monthLabel: { fontSize: 11, fontWeight: '600', fontFamily: FF.semibold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, marginTop: 4 },
+  monthLabel: { fontSize: 10, fontWeight: '600', fontFamily: FF.semibold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6, marginTop: 10 },
 
   paddleCard: {
     backgroundColor: colors.white, borderRadius: 18,
     marginBottom: 8, padding: 16, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 2,
+    shadowColor: '#1a1d26', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 14, elevation: 3,
   },
-  cardTop:      { flexDirection: 'row', marginBottom: 10 },
-  cardRight:    { alignItems: 'flex-end', paddingTop: 2 },
-  paddleName:   { fontSize: 16, fontWeight: '600', fontFamily: FF.semibold, color: colors.text, marginBottom: 2 },
-  paddleLocation: { fontSize: 12, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginBottom: 1 },
-  paddleDate:   { fontSize: 12, fontWeight: '300', fontFamily: FF.light, color: colors.textMuted },
-  distVal:      { fontSize: 26, fontWeight: '300', fontFamily: FF.light, color: colors.text, lineHeight: 28 },
-  distLbl:      { fontSize: 11, fontWeight: '300', fontFamily: FF.light, color: colors.textMuted },
+  cardTop:        { flexDirection: 'row', marginBottom: 10 },
+  cardRight:      { alignItems: 'flex-end', paddingTop: 2, marginRight: 10 },
+  deleteBtn:      { padding: 4, alignSelf: 'flex-start', marginTop: 2 },
+  paddleName:     { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: colors.text, marginBottom: 2 },
+  paddleLocation: { fontSize: 13, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, marginBottom: 1 },
+  paddleDate:     { fontSize: 12, fontWeight: '300', fontFamily: FF.light, color: colors.textMuted },
+  distVal:        { fontSize: 20, fontWeight: '500', fontFamily: FF.medium, color: colors.text, lineHeight: 22 },
+  distLbl:        { fontSize: 10, fontWeight: '500', fontFamily: FF.medium, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.3 },
 
   statsRow:   { flexDirection: 'row', borderTopWidth: 0.5, borderTopColor: colors.borderLight, paddingTop: 12 },
   stat:       { flex: 1, alignItems: 'center' },
   statBorder: { borderLeftWidth: 0.5, borderLeftColor: colors.borderLight },
-  statLbl:    { fontSize: 9, fontWeight: '400', fontFamily: FF.regular, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 3 },
+  statLbl:    { fontSize: 10, fontWeight: '500', fontFamily: FF.medium, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3 },
   statVal:    { fontSize: 15, fontWeight: '500', fontFamily: FF.medium, color: colors.text },
 
   emptyTitle: { fontSize: 17, fontWeight: '600', fontFamily: FF.semibold, color: colors.text },
   emptySub:   { fontSize: 15, fontWeight: '300', fontFamily: FF.light, color: colors.textMuted, textAlign: 'center', lineHeight: 22 },
   trackBtn:   { backgroundColor: colors.primary, borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14, marginTop: 4 },
-  trackBtnText: { fontSize: 16, fontWeight: '600', fontFamily: FF.semibold, color: '#fff' },
+  trackBtnText: { fontSize: 15, fontWeight: '600', fontFamily: FF.semibold, color: '#fff' },
 });

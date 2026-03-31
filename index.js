@@ -1,5 +1,8 @@
 import { registerRootComponent } from 'expo';
 
+// Register background location task early so TaskManager can invoke it
+import './src/services/backgroundLocationTask';
+
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

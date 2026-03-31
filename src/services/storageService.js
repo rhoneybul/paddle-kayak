@@ -19,6 +19,7 @@ const KEYS = {
   SAVED_ROUTES:  'PADDLE_SAVED_ROUTES',
   FAVORITES_QUEUE: 'PADDLE_FAVORITES_QUEUE',
   SAVED_SEARCHES: 'PADDLE_SAVED_SEARCHES',
+  COLLECTIONS:    'PADDLE_COLLECTIONS',
 };
 
 // ── Active trip (in-progress paddle) ─────────────────────────────────────────
@@ -272,6 +273,7 @@ export async function getSavedRoutes() {
         ...(local.isDrawn ? { waypoints: local.waypoints, distanceKm: local.distanceKm, estimated_duration: local.estimated_duration, isDrawn: true } : {}),
         ...(local.localKnowledge ? { localKnowledge: local.localKnowledge } : {}),
         ...(local.lkMessages?.length ? { lkMessages: local.lkMessages } : {}),
+        ...(local.cachedPhotos?.length ? { cachedPhotos: local.cachedPhotos } : {}),
       };
     });
 
@@ -373,6 +375,16 @@ export async function updateRouteLkMessages(id, lkMessages) {
   await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
 }
 
+/** Persist cached photo links onto an existing saved route. */
+export async function updateRoutePhotos(id, cachedPhotos) {
+  const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
+  const routes = cached ? JSON.parse(cached) : [];
+  const idx = routes.findIndex(r => r.id === id);
+  if (idx < 0) return;
+  routes[idx] = { ...routes[idx], cachedPhotos };
+  await AsyncStorage.setItem(KEYS.SAVED_ROUTES, JSON.stringify(routes));
+}
+
 export async function deleteSavedRoute(id) {
   const cached = await AsyncStorage.getItem(KEYS.SAVED_ROUTES);
   const routes = cached ? JSON.parse(cached) : [];
@@ -454,4 +466,52 @@ export async function processFavoritesQueue() {
     }
   }
   await AsyncStorage.setItem(KEYS.FAVORITES_QUEUE, JSON.stringify(remaining));
+}
+
+// ── Collections ──────────────────────────────────────────────────────────────
+
+export async function getCollections() {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  return raw ? JSON.parse(raw) : [];
+}
+
+export async function createCollection(name) {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  const collections = raw ? JSON.parse(raw) : [];
+  const entry = { id: `col_${Date.now()}`, name, createdAt: Date.now(), routeIds: [] };
+  collections.unshift(entry);
+  await AsyncStorage.setItem(KEYS.COLLECTIONS, JSON.stringify(collections));
+  return entry;
+}
+
+export async function deleteCollection(id) {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  const collections = raw ? JSON.parse(raw) : [];
+  await AsyncStorage.setItem(KEYS.COLLECTIONS, JSON.stringify(collections.filter(c => c.id !== id)));
+}
+
+export async function addRouteToCollection(collectionId, routeId) {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  const collections = raw ? JSON.parse(raw) : [];
+  const col = collections.find(c => c.id === collectionId);
+  if (!col) return;
+  if (!col.routeIds.includes(routeId)) col.routeIds.push(routeId);
+  await AsyncStorage.setItem(KEYS.COLLECTIONS, JSON.stringify(collections));
+}
+
+export async function removeRouteFromCollection(collectionId, routeId) {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  const collections = raw ? JSON.parse(raw) : [];
+  const col = collections.find(c => c.id === collectionId);
+  if (!col) return;
+  col.routeIds = col.routeIds.filter(id => id !== routeId);
+  await AsyncStorage.setItem(KEYS.COLLECTIONS, JSON.stringify(collections));
+}
+
+export async function renameCollection(id, name) {
+  const raw = await AsyncStorage.getItem(KEYS.COLLECTIONS);
+  const collections = raw ? JSON.parse(raw) : [];
+  const col = collections.find(c => c.id === id);
+  if (col) col.name = name;
+  await AsyncStorage.setItem(KEYS.COLLECTIONS, JSON.stringify(collections));
 }

@@ -149,13 +149,19 @@ OTHER RULES:
  * @param {number} timeoutMs
  * @returns {Promise<Response>}
  */
-function fetchWithTimeout(url, opts, timeoutMs = REQUEST_TIMEOUT_MS) {
+function fetchWithTimeout(url, opts, timeoutMs = REQUEST_TIMEOUT_MS, externalSignal) {
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
       reject(new Error('Request timed out. The AI service is taking too long — please try again.'));
     }, timeoutMs);
+
+    // If an external signal is provided, abort our controller when it fires
+    if (externalSignal) {
+      if (externalSignal.aborted) { clearTimeout(timer); controller.abort(); reject(new Error('cancelled')); return; }
+      externalSignal.addEventListener('abort', () => { clearTimeout(timer); controller.abort(); });
+    }
 
     fetch(url, { ...opts, signal: controller.signal })
       .then((res) => {
@@ -165,7 +171,12 @@ function fetchWithTimeout(url, opts, timeoutMs = REQUEST_TIMEOUT_MS) {
       .catch((err) => {
         clearTimeout(timer);
         if (err.name === 'AbortError') {
-          reject(new Error('Request timed out. The AI service is taking too long — please try again.'));
+          // Distinguish user cancellation from timeout
+          if (externalSignal?.aborted) {
+            reject(new Error('cancelled'));
+          } else {
+            reject(new Error('Request timed out. The AI service is taking too long — please try again.'));
+          }
         } else {
           reject(err);
         }
@@ -282,6 +293,7 @@ export async function planPaddleWithWeather({
   transport,
   interests,
   location,
+  signal,
 } = {}) {
   // Resolve coordinates — prefer explicit location, fall back to lat/lon
   const resolvedLat = location?.lat != null ? location.lat : lat;
@@ -346,7 +358,7 @@ export async function planPaddleWithWeather({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ systemPrompt: SYSTEM_PROMPT_THREE_ROUTES, userMessage }),
-  });
+  }, REQUEST_TIMEOUT_MS, signal);
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err?.error || `Planning API error ${response.status}`);

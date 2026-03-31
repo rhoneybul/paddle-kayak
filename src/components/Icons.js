@@ -90,6 +90,47 @@ export const SearchIcon = icon((p) => (
   </>
 ));
 
+/** Kayak paddle — double-bladed paddle icon */
+export const PaddleIcon = icon((p) => (
+  <>
+    {/* Shaft */}
+    <Line {...p} x1="5" y1="19" x2="19" y2="5" />
+    {/* Left blade */}
+    <Path {...p} d="M3.5 20.5c-.5-.5-.5-2 .5-3l2-2c.5.5 1 1.5.5 3s-2.5 2.5-3 2z" />
+    {/* Right blade */}
+    <Path {...p} d="M20.5 3.5c.5.5.5 2-.5 3l-2 2c-.5-.5-1-1.5-.5-3s2.5-2.5 3-2z" />
+  </>
+));
+
+/** Chat bubble for feedback */
+export const ChatIcon = icon((p) => (
+  <>
+    <Path {...p} d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+  </>
+));
+
+/** Folder icon for collections */
+export const FolderIcon = icon((p) => (
+  <Path {...p} d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+));
+
+/** Map pin with coffee/POI dot */
+export const PoiSearchIcon = icon((p) => (
+  <>
+    <Circle {...p} cx="12" cy="11" r="8" />
+    <Path {...p} d="M12 19v3" />
+    <Path {...p} d="M8 11h8" />
+    <Path {...p} d="M12 7v8" />
+  </>
+));
+
+/** Draw/pencil on map */
+export const DrawIcon = icon((p) => (
+  <>
+    <Path {...p} d="M17 3l4 4L7 21H3v-4L17 3z" />
+  </>
+));
+
 export const CrosshairIcon = icon((p) => (
   <>
     <Circle {...p} cx="12" cy="12" r="4" />

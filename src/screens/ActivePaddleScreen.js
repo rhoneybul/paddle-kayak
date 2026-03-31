@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput, Alert, KeyboardAvoidingView, Platform, useWindowDimensions,
+  View, Text, TouchableOpacity, StyleSheet, TextInput, Alert, KeyboardAvoidingView, Platform, useWindowDimensions, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
@@ -9,7 +9,10 @@ import { colors, fontFamily } from '../theme';
 import PaddleMap from '../components/PaddleMap';
 import { BackIcon } from '../components/Icons';
 import { getActiveTrip, clearActiveTrip, saveToHistory, addPaddleLogEntry } from '../services/storageService';
+import { track } from '../services/analyticsService';
 import { getWeatherWithCache } from '../services/weatherService';
+import { startBackgroundTracking, stopBackgroundTracking, consumeBackgroundTrack, clearBackgroundTrack } from '../services/backgroundLocationTask';
+import { startLiveActivity, updateLiveActivity, endLiveActivity } from '../services/liveActivityService';
 
 const pad = n => (n < 10 ? `0${n}` : `${n}`);
 const fmtTime = s => {
@@ -60,6 +63,7 @@ export default function ActivePaddleScreen({ navigation, route }) {
   const trackRef     = useRef([]);
   const weatherRef   = useRef(null);
   const startedAtRef = useRef(null);
+  const liveActivityRef = useRef(null); // interval for updating Live Activity
 
   // Nav title
   useEffect(() => {
@@ -80,9 +84,34 @@ export default function ActivePaddleScreen({ navigation, route }) {
     })();
     return () => {
       clearInterval(timerRef.current);
+      clearInterval(liveActivityRef.current);
       locRef.current?.remove?.();
     };
   }, []);
+
+  // Merge background track data when app returns to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      if (nextState === 'active' && status === 'tracking') {
+        try {
+          const bg = await consumeBackgroundTrack();
+          if (bg.track.length > 0) {
+            setLiveTrack(prev => {
+              const merged = [...prev, ...bg.track];
+              trackRef.current = merged;
+              return merged;
+            });
+            if (bg.distKm > distRef.current) {
+              distRef.current = bg.distKm;
+              setDistKm(parseFloat(bg.distKm.toFixed(2)));
+            }
+            await clearBackgroundTrack();
+          }
+        } catch { /* ignore */ }
+      }
+    });
+    return () => sub.remove();
+  }, [status]);
 
   // ── GPS ────────────────────────────────────────────────────────────────────
 
@@ -126,17 +155,40 @@ export default function ActivePaddleScreen({ navigation, route }) {
 
   const startTracking = useCallback(async () => {
     setStatus('tracking');
+    track('paddle_started', { mode, routeName: savedRoute?.name });
     startedAtRef.current = Date.now();
     timerRef.current = setInterval(() => {
       setElapsed(e => { elapsedRef.current = e + 1; return e + 1; });
     }, 1000);
     await startGps();
-  }, [startGps]);
+
+    // Start background tracking (iOS/Android — keeps GPS alive when backgrounded)
+    if (Platform.OS !== 'web') {
+      startBackgroundTracking().catch(() => {});
+    }
+
+    // Start Live Activity (iOS 16.1+)
+    startLiveActivity({
+      paddleName: paddleName || 'Paddle',
+      routeName: savedRoute?.name || '',
+    });
+
+    // Update Live Activity every 3 seconds
+    liveActivityRef.current = setInterval(() => {
+      updateLiveActivity({
+        distanceKm: distRef.current,
+        elapsedSeconds: elapsedRef.current,
+        speedKmh: speed,
+      });
+    }, 3000);
+  }, [startGps, paddleName, savedRoute, speed]);
 
   const pause = useCallback(() => {
     setStatus('paused');
     clearInterval(timerRef.current);
+    clearInterval(liveActivityRef.current);
     stopGps();
+    if (Platform.OS !== 'web') stopBackgroundTracking().catch(() => {});
   }, [stopGps]);
 
   const resume = useCallback(async () => {
@@ -145,11 +197,25 @@ export default function ActivePaddleScreen({ navigation, route }) {
       setElapsed(e => { elapsedRef.current = e + 1; return e + 1; });
     }, 1000);
     await startGps();
-  }, [startGps]);
+    if (Platform.OS !== 'web') startBackgroundTracking().catch(() => {});
+    liveActivityRef.current = setInterval(() => {
+      updateLiveActivity({
+        distanceKm: distRef.current,
+        elapsedSeconds: elapsedRef.current,
+        speedKmh: speed,
+      });
+    }, 3000);
+  }, [startGps, speed]);
 
   const finish = useCallback(() => {
     clearInterval(timerRef.current);
+    clearInterval(liveActivityRef.current);
     stopGps();
+    if (Platform.OS !== 'web') stopBackgroundTracking().catch(() => {});
+    endLiveActivity({
+      distanceKm: distRef.current,
+      elapsedSeconds: elapsedRef.current,
+    });
     setStatus('finishing');
   }, [stopGps]);
 
@@ -161,12 +227,14 @@ export default function ActivePaddleScreen({ navigation, route }) {
       distancePaddled: parseFloat(distRef.current.toFixed(2)),
       durationSeconds: elapsedRef.current,
       positions:       trackRef.current,
+      gpsTrack:        trackRef.current, // also store as gpsTrack for map rendering
       startedAt:       startedAtRef.current,
       completedAt:     Date.now(),
       weather:         weatherRef.current,
       mode:            mode,
     });
     await clearActiveTrip();
+    track('paddle_completed', { distanceKm: distRef.current, durationSeconds: elapsedRef.current });
     navigation.navigate('CompletedPaddles');
   }, [paddleName, savedRoute, mode, navigation]);
 

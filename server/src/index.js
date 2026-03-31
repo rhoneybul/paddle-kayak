@@ -9,6 +9,7 @@ const weatherRouter     = require('./routes/weather');
 const usersRouter       = require('./routes/users');
 const planningRouter    = require('./routes/planning');
 const savedRoutesRouter = require('./routes/savedRoutes');
+const poisRouter        = require('./routes/pois');
 
 const { authMiddleware } = require('./middleware/auth');
 
@@ -33,6 +34,7 @@ app.use('/api/saved-routes',  authMiddleware, savedRoutesRouter);
 app.use('/api/campsites', campsitesRouter);  // public — no auth needed
 app.use('/api/weather',   weatherRouter);    // public — proxies Open-Meteo
 app.use('/api/planning',  planningRouter);   // public — plans paddles via Claude
+app.use('/api/pois',     poisRouter);      // public — POI search via Overpass
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {

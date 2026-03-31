@@ -3,7 +3,7 @@ import { HomeIcon } from '../components/Icons';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Animated, Keyboard, Alert, Platform, Modal, RefreshControl, ActivityIndicator, Image,
-  useWindowDimensions,
+  useWindowDimensions, KeyboardAvoidingView, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
@@ -21,6 +21,8 @@ import { searchLocations, MIN_SEARCH_LENGTH, SEARCH_DEBOUNCE_MS } from '../servi
 import { getWeatherWithCache } from '../services/weatherService';
 import { fetchTides, buildTideHeightMap, buildTideExtremeMap } from '../services/tideService';
 import { saveRoute, getSavedRoutes, deleteSavedRoute, saveSearch, deleteSavedSearch } from '../services/storageService';
+import { startSearch as startBgSearch } from '../services/searchManager';
+import { track } from '../services/analyticsService';
 import {
   validateMaritimeRoute,
   normaliseWaypointCoords,
@@ -145,6 +147,19 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
   const [expandedRoute, setExpandedRoute]       = useState(-1);
   const fadeAnim    = useRef(new Animated.Value(0)).current;
   const loadingMsgRef = useRef(null);
+  const abortRef = useRef(null);
+  const pendingSearchRef = useRef(null); // stores search params for retry after background
+
+  // Keep search alive when app returns from background
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && pendingSearchRef.current && !loading && !plan && !planError) {
+        // App returned from background and search may have been dropped — retry
+        handleGenerate();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   // Save modal state
   const [saveModalRoute, setSaveModalRoute] = useState(null); // route obj being saved
@@ -345,7 +360,30 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
 
     if (!destination.trim()) return;
 
+    // Cancel any in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     const input = buildPrompt();
+    pendingSearchRef.current = true;
+
+    // Track the search event
+    track('search_started', { destination, minDurationHrs, maxDurationHrs });
+
+    // Start a background search (continues even if user navigates away)
+    const bgSearchParams = {
+      prompt: input,
+      lat: locationCoords?.lat,
+      lon: locationCoords?.lng,
+      minDurationHrs,
+      maxDurationHrs,
+      maxTravelMins: maxTravelMins < 9999 ? maxTravelMins : undefined,
+      location: locationCoords ? { lat: locationCoords.lat, lng: locationCoords.lng } : undefined,
+      destination,
+    };
+    startBgSearch(bgSearchParams).catch(() => {});
+
     setPrompt(input);
     setLoading(true);
     setPlan(null);
@@ -379,6 +417,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
         maxDurationHrs,
         maxTravelMins: maxTravelMins < 9999 ? maxTravelMins : undefined,
         location: locationCoords ? { lat: locationCoords.lat, lng: locationCoords.lng } : undefined,
+        signal: controller.signal,
       });
 
       // Maritime-first: validate each route's waypoints for water-safe geometry
@@ -398,15 +437,23 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
         });
       }
 
+      pendingSearchRef.current = null;
       setPlan(result);
       setLoadingPct(100);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {
-      setPlanError(e);
+      if (e.message === 'cancelled') {
+        pendingSearchRef.current = null;
+        // User cancelled — silently return to input screen
+      } else {
+        // Keep pendingSearchRef set so auto-retry can kick in on foreground
+        setPlanError(e);
+      }
     } finally {
       clearInterval(loadingMsgRef.current);
       loadingMsgRef.current = null;
       setLoading(false);
+      abortRef.current = null;
     }
   };
 
@@ -416,8 +463,12 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
     setNudge(prev => (prev.trim() ? `${prev.trim()}. ${refineText.trim()}` : refineText.trim()));
     setRefineText('');
     setRefineOpen(false);
-    // Re-run generate with the new nudge baked in via the updated state
-    // We call planPaddleWithWeather directly with the augmented prompt
+
+    // Cancel any in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     const travelLabel = MAX_TRAVEL_OPTIONS.find(o => o.value === maxTravelMins)?.label ?? 'any distance';
     const parts = [
       `I'm near ${destination}`,
@@ -461,6 +512,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
         maxDurationHrs,
         maxTravelMins: maxTravelMins < 9999 ? maxTravelMins : undefined,
         location: locationCoords ? { lat: locationCoords.lat, lng: locationCoords.lng } : undefined,
+        signal: controller.signal,
       });
       if (result.routes) {
         result.routes = result.routes.map(r => ({
@@ -474,12 +526,25 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
       setLoadingPct(100);
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     } catch (e) {
-      setPlanError(e);
+      if (e.message === 'cancelled') {
+        // User cancelled — silently return to input screen
+      } else {
+        setPlanError(e);
+      }
     } finally {
       clearInterval(loadingMsgRef.current);
       loadingMsgRef.current = null;
       setLoading(false);
     }
+  };
+
+  const handleCancelSearch = () => {
+    if (abortRef.current) abortRef.current.abort();
+    clearInterval(loadingMsgRef.current);
+    loadingMsgRef.current = null;
+    setLoading(false);
+    abortRef.current = null;
+    pendingSearchRef.current = null;
   };
 
   const reset = () => {
@@ -634,6 +699,11 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
             />
           )}
 
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+          >
           <ScrollView
             style={s.scroll}
             showsVerticalScrollIndicator={false}
@@ -791,6 +861,7 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
             <View style={{ height: 48 }} />
             </>}
           </ScrollView>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </View>
     );
@@ -805,13 +876,16 @@ export default function PlannerScreen({ navigation, route: navRoute }) {
         <Text style={s.loadPrompt} numberOfLines={2}>
           {`${destination} · ${minDurationHrs}–${maxDurationHrs}h paddle`}
         </Text>
-        <View style={{ width: 200, marginTop: 8 }}>
+        <View style={{ width: 200, marginTop: 16 }}>
           <ProgressBar startLabel="Analysing" endLabel="Done" pct={loadingPct} color={colors.primary} />
         </View>
         <Text style={s.loadStep}>{loadingMsg}</Text>
         <View style={s.dotsRow}>
           <LoadDot delay={0} /><LoadDot delay={200} /><LoadDot delay={400} />
         </View>
+        <TouchableOpacity style={s.cancelBtn} onPress={handleCancelSearch} activeOpacity={0.7}>
+          <Text style={s.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -1408,7 +1482,7 @@ const FF = fontFamily;
 const s = StyleSheet.create({
   container:  { flex: 1, backgroundColor: colors.bg },
   safe:       { flex: 1 },
-  centered:   { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  centered:   { flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', gap: 18, paddingHorizontal: 20 },
   nav:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: P, paddingBottom: 8, paddingTop: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border },
   back:       { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   backText:   { fontSize: 24, color: colors.primary },
@@ -1525,6 +1599,8 @@ const s = StyleSheet.create({
   loadStep:   { fontSize: 13, fontWeight: '400', fontFamily: FF.regular, color: colors.primary, textAlign: 'center', marginTop: 2 },
   dotsRow:    { flexDirection: 'row', gap: 6, marginTop: 4 },
   dot:        { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
+  cancelBtn:  { marginTop: 12, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border },
+  cancelBtnText: { fontSize: 15, fontWeight: '500', fontFamily: FF.medium, color: colors.textMid },
 
   // Results
   driveBadge:     { position: 'absolute', top: 12, right: 12, backgroundColor: 'rgba(255,255,255,0.93)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },

@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/react-native';
 import { useFonts, Poppins_300Light, Poppins_400Regular, Poppins_500Medium, Poppins_600SemiBold } from '@expo-google-fonts/poppins';
 import * as SplashScreen from 'expo-splash-screen';
 import { getSession } from './src/services/authService';
+import { resumeStaleSearches } from './src/services/searchManager';
 
 Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
@@ -30,6 +31,7 @@ import YourPaddlesScreen   from './src/screens/YourPaddlesScreen';
 import SavedSearchesScreen    from './src/screens/SavedSearchesScreen';
 import CompletedPaddlesScreen from './src/screens/CompletedPaddlesScreen';
 import PaddleDetailScreen     from './src/screens/PaddleDetailScreen';
+import FeedbackScreen         from './src/screens/FeedbackScreen';
 import WebWrapper             from './src/components/WebWrapper';
 
 const Stack = createStackNavigator();
@@ -66,6 +68,8 @@ export default Sentry.wrap(function App() {
     getSession().then(session => {
       setInitialRoute(session ? 'Home' : 'SignIn');
     });
+    // Resume any stale background searches from a previous session
+    resumeStaleSearches().catch(() => {});
   }, []);
 
   const onLayoutRootView = useCallback(async () => {
@@ -105,6 +109,7 @@ export default Sentry.wrap(function App() {
               <Stack.Screen name="SavedSearches"    component={SavedSearchesScreen} />
               <Stack.Screen name="CompletedPaddles" component={CompletedPaddlesScreen} />
               <Stack.Screen name="PaddleDetail"     component={PaddleDetailScreen} />
+              <Stack.Screen name="Feedback"         component={FeedbackScreen} />
             </Stack.Navigator>
           </NavigationContainer>
         </View>

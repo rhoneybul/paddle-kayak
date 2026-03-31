@@ -50,7 +50,8 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Solvaa uses your location to track your route and provide real-time safety alerts."
+          "locationAlwaysAndWhenInUsePermission": "Solvaa uses your location to track your route and provide real-time safety alerts.",
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       [
@@ -62,7 +63,8 @@
       ],
       "expo-web-browser",
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      "./plugins/withLiveActivity"
     ],
     "extra": {
       "stravaClientId": "",
